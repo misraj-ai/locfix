@@ -1,0 +1,19 @@
+# private / large
+context/
+vendor/
+golden/
+configs/paths.yaml
+records/
+runs/
+eval/
+models/
+*.safetensors
+*.whl
+# python
+__pycache__/
+*.pyc
+.venv/
+envs/*/.venv/
+*.egg-info/
+.pytest_cache/
+work/

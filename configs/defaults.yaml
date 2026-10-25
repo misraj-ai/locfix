@@ -1,0 +1,109 @@
+# Default configuration. Run configs (configs/runs/*.yaml) override these keys.
+# Values marked "from timing" are placeholders until `locfix eval timing` runs on Kaggle L4x4.
+
+seed: 1234
+
+paths:                         # local defaults; override in configs/paths.yaml (see paths.example.yaml)
+  data_root: ./work/data/codeagent_final
+  competition_data: ./work/data/gemma4-dev
+  vendor_wheels: ./vendor
+  models: ./work/models
+  records: ./work/records
+  runs: ./work/runs
+  eval: ./work/eval
+  golden: ./work/golden
+  codeagent_validate: ./work/codeagent-validate
+
+versions:                      # Kaggle scoring wheelhouse; serve env must match exactly
+  vllm: 0.19.1
+  transformers: 5.13.1
+  swegemma: 0.2.11
+  adk_submission: 0.2.13
+  adk_eval_core: 0.1.0
+
+models:
+  e4b:
+    serve_id: gemma-4-e4b-it-qat-w4a16-ct
+    hf_ct: google/gemma-4-e4b-it-qat-w4a16-ct
+    dequantized: ${paths.models}/gemma4-e4b-w4a16-dequant-bf16
+    lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]  # confirm vs vLLM (spec 01)
+  31b:
+    serve_id: gemma-4-31b-it-qat-w4a16-ct
+    hf_ct: google/gemma-4-31b-it-qat-w4a16-ct
+    dequantized: ${paths.models}/gemma4-31b-w4a16-dequant-bf16
+    lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]  # k/v sharing check (spec 01)
+  12b:
+    serve_id: gemma-4-12b-it-qat-w4a16-ct
+    hf_ct: google/gemma-4-12b-it-qat-w4a16-ct
+    dequantized: ${paths.models}/gemma4-12b-w4a16-dequant-bf16
+    text_only_class: Gemma4ForCausalLM
+    lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+harness:                       # must equal the Kaggle scorer (docs/reference/harness_facts.md)
+  max_model_len: 32768
+  tool_call_parser: gemma4
+  reasoning_parser: gemma4
+  compaction: {compaction_interval: 15, overlap_size: 2, token_threshold: 14336, event_retention_size: 5}
+  read_file_max_lines: 150
+  read_file_max_chars: 10000
+  max_stdout_chars: 5000
+  command_timeout_seconds: 300
+
+budget:                        # eval_config.yaml of the submission; records are built with the same values
+  max_time_minutes: 5
+  max_tool_calls: 30           # warning fires at <= 10 remaining
+  max_turns: 300
+  time_filter_fraction: 0.9    # drop trajectories whose projected time > 0.9 x cap
+
+timing:                        # from timing (spec 07); tokens/s on Kaggle 4xL4
+  e4b: {prefill_tps: null, decode_tps: null, setup_seconds: null}
+  31b: {prefill_tps: null, decode_tps: null, setup_seconds: null}
+
+generation:                    # agent sampling; keep the team's tested values unless Stage 0 says otherwise
+  include_thoughts: true
+  thinking_budget: 4096
+  max_output_tokens: 16384
+
+data:
+  training_layout: auto        # one_sequence | per_turn; set by the prefix-consistency test (spec 02)
+  val_fraction: 0.03
+  exclude_repos: [fastapi, requests, rich, httpx]   # dev-set repositories (match any owner)
+  heldout_size: 300
+
+train:
+  max_seq_len: 32768
+  lora: {r: 64, alpha: 32, dropout: 0.0, use_rslora: false}
+  optimizer: {name: adamw, betas: [0.9, 0.999], weight_decay: 0.0, grad_clip: 1.0}
+  schedule: {warmup_steps: 10, decay: cosine, min_lr_ratio: 0.1}
+  global_batch_sequences: 16
+  per_device_batch: 1
+  gradient_checkpointing: true
+  lr: {e4b: 2.0e-4, 31b: 1.0e-4, 12b: 1.0e-4}
+  epochs: 3
+  save_every_epoch: true
+  warm_start_lr_scale: 0.5     # EM rounds and Stage 5
+  target_visits_per_patch: 3
+
+search:                        # sweeps (docs/reference/hyperparameters.md)
+  lr: {e4b: [1.0e-4, 2.0e-4, 4.0e-4], 31b: [5.0e-5, 1.0e-4, 2.0e-4]}
+  rank: {e4b: [32, 64], 31b: [32, 64]}
+  global_batch_sequences: [8, 16]
+
+em:
+  K: 8
+  sample_temperature: 0.8
+  ess_target: 2                # 1 = hard EM; search {1, 2, 4}
+  ctx_cost_sigma: 0.25         # search {0, 0.25, 0.5}
+  req_cost_sigma: 0.25         # search {0.1, 0.25, 0.5}
+  beta: 0.5                    # search {0.25, 0.5, 1.0}
+  resample_m: 3
+  no_request_fraction: 0.4
+  max_locations: 8
+  ctx_budget_tokens: 6000
+  localizer_max_calls: 12
+  max_rounds: 3
+  unsolved_ratio: 0.0          # Stage 4 search {0, 0.5, 1.0}
+
+eval:
+  seeds: [0, 1]
+  concurrency: 32

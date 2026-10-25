@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "locfix/record.schema.json",
+  "title": "Training record (untokenized)",
+  "description": "One training example. `tools` and `messages` are exactly what LiteLLM sends to vLLM (captured by the scripted replay, spec 03), plus the final assistant response. Rendering to tokens uses the model's chat template (src/locfix/render/chat.py).",
+  "type": "object",
+  "required": ["id", "stage", "role", "instance_id", "source", "agent_config", "tools", "messages", "loss", "weight", "meta"],
+  "properties": {
+    "id": {"type": "string", "description": "<stage>__<instance_id>__a<attempt>[__z<cand>][__w<window>][__t<turn>]"},
+    "stage": {
+      "type": "string",
+      "enum": ["s1_agent", "s2_loc_edit", "s2_loc_view", "s2_fix_gold", "s2_fix_noisy",
+               "s3_loc_r0", "s3_fix_r0", "s3_loc", "s3_fix", "s4_loc", "s4_fix", "s5_agent", "s5_fix", "s5_loc"]
+    },
+    "role": {"type": "string", "enum": ["agent", "localizer", "fixer"]},
+    "instance_id": {"type": "string"},
+    "source": {
+      "type": "object",
+      "required": ["set", "dataset", "fold"],
+      "properties": {
+        "set": {"type": "string", "enum": ["solved", "unsolved", "self"]},
+        "dataset": {"type": "string", "enum": ["swebench", "swe_gym", "r2e_gym", "swe_smith", "other"]},
+        "fold": {"type": "string", "enum": ["A", "B"]},
+        "attempt": {"type": "integer"}
+      }
+    },
+    "agent_config": {"type": "string", "description": "Agent YAML the record was replayed with, e.g. agents/locfix/agent.yaml"},
+    "round": {"type": ["integer", "null"], "description": "EM round for s3/s4 records"},
+    "tools": {"type": "array", "items": {"type": "object"}, "description": "OpenAI tool specs exactly as sent"},
+    "messages": {"type": "array", "items": {"type": "object"}, "description": "OpenAI chat messages exactly as sent, ending with the trained assistant response(s)"},
+    "loss": {
+      "type": "array",
+      "description": "One entry per assistant message; messages not listed are context only.",
+      "items": {
+        "type": "object",
+        "required": ["message_index", "train", "weight"],
+        "properties": {
+          "message_index": {"type": "integer"},
+          "train": {"type": "boolean"},
+          "weight": {"type": "number", "minimum": 0},
+          "reason": {"type": "string", "description": "why weight != 1: repeated_call, reference_seeking, ..."}
+        }
+      }
+    },
+    "weight": {"type": "number", "minimum": 0, "description": "Record weight (EM weight w_k, anchor beta, or 1)"},
+    "spans": {
+      "type": ["object", "null"],
+      "description": "Character spans inside messages for scoring y*_+ (spec 06). Each item: [message_index, field_path, start, end].",
+      "properties": {"score_plus": {"type": "array", "items": {"type": "array"}}}
+    },
+    "z": {"type": ["object", "null"], "description": "Localization used by this record (localizer/fixer records)"},
+    "meta": {
+      "type": "object",
+      "description": "Builder information: n_counted_calls, projected_seconds, compaction_window, trace_entry_ids, budget, summarizer, synthetic_steps, cleaning version, builder_version, git_sha"
+    }
+  }
+}

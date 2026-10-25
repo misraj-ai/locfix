@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "locfix/scoring_record.schema.json",
+  "title": "Scoring record (one candidate localization of one issue)",
+  "type": "object",
+  "required": ["instance_id", "fold", "round", "fixer_adapter", "cand_id", "z_source", "z",
+               "requests", "n_ctx_tokens", "n_requests", "n_plus_tokens", "logp_plus_sum", "logp_plus_mean"],
+  "properties": {
+    "instance_id": {"type": "string"},
+    "set": {"type": "string", "enum": ["solved", "unsolved"]},
+    "fold": {"type": "string", "enum": ["A", "B"], "description": "Fold of the issue; scored by the fixer of the other fold"},
+    "round": {"type": "integer"},
+    "fixer_adapter": {"type": "string"},
+    "localizer_adapter": {"type": ["string", "null"]},
+    "cand_id": {"type": "integer"},
+    "z_source": {"type": "string", "description": "teacher | sample:t<temp> | perturb:<kind>"},
+    "z": {"type": "object"},
+    "requests": {"type": "array", "items": {"type": "object"}},
+    "n_ctx_tokens": {"type": "integer", "description": "tokens of the code shown for z"},
+    "n_requests": {"type": "integer"},
+    "n_plus_tokens": {"type": "integer"},
+    "logp_plus_sum": {"type": "number"},
+    "logp_plus_mean": {"type": "number"},
+    "score": {"type": ["number", "null"], "description": "logp_plus_mean - lambda_ctx*ctx/1000 - lambda_req*n_requests"},
+    "tau": {"type": ["number", "null"]},
+    "w": {"type": ["number", "null"], "description": "weight of (z, requests)"},
+    "w_z": {"type": ["number", "null"], "description": "weight of z marginalized over request sequences"},
+    "loo": {"type": ["array", "null"], "description": "leave-one-out gains per location: [{index, delta}]"}
+  }
+}

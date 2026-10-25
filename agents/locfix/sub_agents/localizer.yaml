@@ -1,0 +1,12 @@
+name: localizer
+description: >-
+  Finds the code locations relevant to the issue. Call it with a short request
+  (for example "Find the code locations relevant to this issue." or "Find where X is defined").
+  Returns JSON: {"locations": [{"path", "symbol", "lines", "role"}]}.
+model: gemma-4-31b-it-qat-w4a16-ct
+# adapter: loc_lora
+instruction: !include prompts/localizer.md   # relative to this file; ".." is rejected
+tools:
+  - run_command
+  - read_file
+generate_content_config: !include configs/sampling.yaml

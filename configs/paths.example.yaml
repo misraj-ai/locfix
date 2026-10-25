@@ -1,0 +1,11 @@
+# Copy to configs/paths.yaml (gitignored) and fill in.
+paths:
+  data_root: /data/codeagent_final          # cleaned/, experiment/, loc/ (see context/DATA_PIPELINE.md)
+  competition_data: /data/gemma4-dev        # tasks.jsonl, snapshots/, wheels/
+  vendor_wheels: ./vendor                   # swegemma, adk_submission, adk_eval_core wheels
+  models: /models                           # dequantized checkpoints
+  records: /work/records
+  runs: /work/runs
+  eval: /work/eval
+  golden: /work/golden                      # captured harness requests (spec 02)
+  codeagent_validate: /src/codeagent-validate   # for held-out evaluation on task images
