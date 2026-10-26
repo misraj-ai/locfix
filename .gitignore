@@ -1,12 +1,12 @@
 # private / large
 context/
 vendor/
-golden/
-configs/paths.yaml
-records/
-runs/
-eval/
-models/
+/golden/
+/configs/paths.yaml
+/records/
+/runs/
+/eval/
+/models/
 *.safetensors
 *.whl
 # python

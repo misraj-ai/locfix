@@ -201,3 +201,15 @@ all recorded reads, seds and edit diffs).
 
 Fixture results (budget_locfix): 4/4 tasks, 0 drops; records per stage: s2_fix_gold 4,
 s2_fix_noisy 8, s2_loc_edit 4, s2_loc_view 4, s3_loc_r0 4; longest record 19.7K tokens.
+
+### Code without `code/<id>.json` (2026-10-26)
+
+`code/<id>.json` exists for the unsolved set (`experiment/code`). For solved tasks without one,
+`locfix.data.code_from_trace` rebuilds the files from what the teacher printed before its first
+edit (complete lines of `read_file` outputs, plain `sed -n 'a,bp' FILE` and `cat FILE` stdout);
+unseen lines are unknown, partially seen Python files get symbols from a header/indentation scan
+of the known lines, and any synthetic read touching an unknown line drops the variant
+(`unseen_code`). Exact on the fixtures (every known line equals the true code). Tasks whose edited
+file was only shown inside a combined command (e.g. `grep ... ; sed -n ...`) are dropped
+(`missing_code`). **Preferred:** have the data pipeline write `cleaned/code/<id>.json` for the
+solved set (same extraction as for `experiment/code`); `SolvedData` looks there first.

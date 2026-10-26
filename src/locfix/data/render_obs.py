@@ -18,12 +18,27 @@ MAX_READ_LINES = 150
 MAX_READ_CHARS = 10000
 
 
-class ObsRenderer:
-    """`read_file` on the base-commit files of one task."""
+class UnseenCode(ValueError):
+    """A synthetic read would show lines whose text we do not know (code reconstructed from the
+    trace, `code_from_trace`)."""
 
-    def __init__(self, files: dict[str, str]):
+
+class ObsRenderer:
+    """`read_file` on the base-commit files of one task. `known` (optional): per file, the line
+    numbers whose text is known; reads touching other lines raise `UnseenCode`."""
+
+    def __init__(self, files: dict[str, str], known: dict[str, set[int]] | None = None):
         self.files = files
+        self.known = known
         self.ws = LocalWorkspace(files)
+
+    def check_known(self, path: str, a: int, b: int) -> None:
+        if self.known is None:
+            return
+        k = self.known.get(path, set())
+        missing = [n for n in range(a, b + 1) if n not in k]
+        if missing:
+            raise UnseenCode(f"{path}: {len(missing)} unseen line(s) in {a}-{b}")
 
     def __enter__(self) -> ObsRenderer:
         return self
@@ -110,6 +125,7 @@ def read_calls_for(locations: list[Location], files: dict[str, str], renderer: O
             lines = files[p].splitlines()
             for a, b in merge_ranges(spans[p]):
                 for s, e in chunk_range(lines, a, b, max_lines, max_chars):
+                    r.check_known(p, s, e)
                     call = ReadCall(WORKSPACE + p, s, e)
                     out.append((call, r.read_file(call.filepath, call.start_line, call.end_line)))
     finally:

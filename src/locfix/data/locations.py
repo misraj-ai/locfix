@@ -51,9 +51,14 @@ def normalize_path(path: str) -> str:
 
 
 class SymbolIndex:
-    """Definitions of one file (Python via `ast`; other files have only `<file>`)."""
+    """Definitions of one file (Python via `ast`; other files have only `<file>`).
 
-    def __init__(self, path: str, text: str):
+    `known`: for code rebuilt from a trace (`code_from_trace`), the line numbers whose text is
+    known. Such files usually do not parse; their definitions are then found by scanning the known
+    lines (`def`/`class` headers and indentation), and each span stops at the end of its known block.
+    """
+
+    def __init__(self, path: str, text: str, known: set[int] | None = None):
         self.path = normalize_path(path)
         self.text = text
         self.n_lines = len(text.splitlines())
@@ -67,7 +72,47 @@ class SymbolIndex:
                 tree = None
             if tree is not None:
                 self._walk(tree.body, prefix="", depth=0)
+            elif known:
+                self._scan_partial(known)
+                self.parsed = True
         self.symbols.sort(key=lambda s: (s.start, -s.end))
+
+    _HEADER = re.compile(r"^(\s*)(?:async\s+def|def|class)\s+(\w+)")
+
+    def _scan_partial(self, known: set[int]) -> None:
+        lines = self.text.splitlines()
+
+        def indent(s: str) -> int:
+            return len(s) - len(s.lstrip())
+
+        stack: list[tuple[int, str, int]] = []          # (indent, qualified name, start)
+        opened: list[tuple[int, str, int, int]] = []     # (start, name, indent, depth)
+        for n in sorted(k for k in known if 1 <= k <= len(lines)):
+            text = lines[n - 1]
+            m = self._HEADER.match(text)
+            if m:
+                ind = indent(text)
+                while stack and stack[-1][0] >= ind:
+                    stack.pop()
+                name = (stack[-1][1] + "." if stack else "") + m.group(2)
+                stack.append((ind, name, n))
+                opened.append((n, name, ind, len(stack) - 1))
+        for start, name, ind, depth in opened:
+            end = start
+            n = start + 1
+            while n in known and n <= len(lines):
+                t = lines[n - 1]
+                if t.strip() and indent(t) <= ind and not t.lstrip().startswith((")", "]", "}")):
+                    break
+                end = n
+                n += 1
+            while end > start and not lines[end - 1].strip():
+                end -= 1
+            first = start                                 # decorators belong to the definition
+            while first - 1 in known and lines[first - 2].strip().startswith("@") \
+                    and indent(lines[first - 2]) == ind:
+                first -= 1
+            self.symbols.append(Symbol(self.path, name, first, end, depth))
 
     def _walk(self, body, prefix: str, depth: int) -> None:
         for node in body:
@@ -140,7 +185,8 @@ def _runs(nums: list[int]) -> list[tuple[int, int]]:
 
 
 # --------------------------------------------------------------------------- L_edit
-def edit_locations(files_before: dict[str, str], patch: str) -> list[Location]:
+def edit_locations(files_before: dict[str, str], patch: str,
+                   known: dict[str, set[int]] | None = None) -> list[Location]:
     """Symbols touched by `patch` (old-file line numbers). New files are file-level entries."""
     out: list[Location] = []
     for fp in parse_patch(patch):
@@ -150,7 +196,7 @@ def edit_locations(files_before: dict[str, str], patch: str) -> list[Location]:
         text = files_before.get(fp.old_path or "")
         if text is None:
             raise KeyError(f"code for {fp.old_path} not available")
-        idx = SymbolIndex(fp.old_path or "", text)
+        idx = SymbolIndex(fp.old_path or "", text, (known or {}).get(normalize_path(fp.old_path or "")))
         out.extend(idx.location_for_lines(fp.changed_old_lines(), role="edit"))
     return out
 
@@ -239,7 +285,8 @@ def view_ranges(trace: Trace, before_first_edit: bool = True) -> list[View]:
     return out
 
 
-def view_locations(trace: Trace, files: dict[str, str]) -> list[Location]:
+def view_locations(trace: Trace, files: dict[str, str],
+                   known: dict[str, set[int]] | None = None) -> list[Location]:
     """L_view: symbols the teacher viewed before its first edit, in first-view order.
     Files without available code are skipped (reported by the caller)."""
     seen: dict[tuple, Location] = {}
@@ -247,7 +294,7 @@ def view_locations(trace: Trace, files: dict[str, str]) -> list[Location]:
         text = files.get(v.path)
         if text is None:
             continue
-        idx = SymbolIndex(v.path, text)
+        idx = SymbolIndex(v.path, text, (known or {}).get(v.path))
         start = v.start if v.start > 0 else max(1, idx.n_lines + v.start + 1)
         end = idx.n_lines if v.end is None else min(v.end, idx.n_lines)
         for loc in idx.symbols_overlapping(start, end):

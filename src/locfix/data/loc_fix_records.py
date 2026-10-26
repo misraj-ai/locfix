@@ -30,8 +30,8 @@ from ..harness.replay import ReplayResult, ScriptCall, ScriptNudge, ScriptTurn, 
 from .agent_records import DEFAULT_TOOLS, _turn_weight, records_from_replay
 from .edits import make_unified_diff
 from .locations import Location, edit_locations, normalize_path, view_locations
-from .render_obs import ObsRenderer, read_calls_for
-from .traces import Nudge, ToolCall, Trace, Turn, is_workspace_write_command, load_trace
+from .render_obs import ObsRenderer, UnseenCode, read_calls_for
+from .traces import Nudge, ToolCall, Trace, Turn, is_workspace_write_command
 from .zloc import key, minus, prune, union, z_to_json
 
 LOCALIZER = "localizer"
@@ -67,6 +67,7 @@ class Task:
     problem_statement: str
     hints: str | None = None
     source: dict[str, Any] = field(default_factory=dict)
+    known_lines: dict[str, set[int]] | None = None   # set when code was rebuilt from the trace
 
     @property
     def instance_id(self) -> str:
@@ -135,12 +136,12 @@ def split_trace(trace: Trace) -> tuple[list[Turn], list[Turn | Nudge]]:
 def task_locations(task: Task) -> TaskLocations:
     pre, post = split_trace(task.trace)
     try:
-        l_edit = edit_locations(task.files, task.patch)
+        l_edit = edit_locations(task.files, task.patch, task.known_lines)
     except KeyError as e:
         raise TaskSkip("missing_code", str(e)) from e
     if not l_edit:
         raise TaskSkip("empty_l_edit")
-    l_view = view_locations(task.trace, task.files)
+    l_view = view_locations(task.trace, task.files, task.known_lines)
     searches = [c for c in task.trace.calls_before_first_edit()
                 if c.tool == "run_command" and _SEARCH.search(c.args.get("command", ""))]
     return TaskLocations(l_edit, l_view, pre, post, searches)
@@ -410,7 +411,7 @@ def build_scripts(task: Task, tl: TaskLocations, v: Variant, budget: Budget, em_
                           turns=budget.turns)
     loc_steps, loc_meta = localizer_session(tl, task.trace, v.z, walker,
                                             em_cfg.get("localizer_max_calls", 12), time_scale)
-    with ObsRenderer(task.files) as r:
+    with ObsRenderer(task.files, task.known_lines) as r:
         fix_steps, fix_meta = fixer_script(task, tl, v.z, v.requests, walker, r, time_scale)
     meta = {**loc_meta, **fix_meta, "counted_calls": walker.used}
     return Scripts(fix_steps, loc_steps, meta)
@@ -445,7 +446,10 @@ def replay_variant(task: Task, tl: TaskLocations, v: Variant, cfg: LocFixConfig,
 
 def records_for_variant(task: Task, tl: TaskLocations, v: Variant, cfg: LocFixConfig, **kw: Any
                         ) -> list[dict[str, Any]]:
-    res, sc = replay_variant(task, tl, v, cfg, **kw)
+    try:
+        res, sc = replay_variant(task, tl, v, cfg, **kw)
+    except UnseenCode as e:
+        raise TaskSkip("unseen_code", str(e)) from e
     common = {"variant": v.name, "z": [x.to_json() for x in v.z], "requests_enabled": v.requests,
               "l_edit": [x.to_json() for x in tl.l_edit], "l_view": [x.to_json() for x in tl.l_view],
               "budget": cfg.budget.__dict__, "trace": Path(task.trace.path).name, **sc.meta}
@@ -493,15 +497,19 @@ def build_task_records(task: Task, cfg: LocFixConfig, counts: dict[str, int] | N
 
 # --------------------------------------------------------------------------- CLI
 def add_args_cmd_locfix_records(p: argparse.ArgumentParser) -> None:
-    p.add_argument("traces", help="folder of cleaned traces")
+    p.add_argument("traces", help="folder of cleaned traces (codeagent_final/cleaned/traces)")
     p.add_argument("--solved", required=True, help="solved.jsonl (teacher.patch, problem_statement, fold)")
-    p.add_argument("--code", required=True, help="folder of code/<instance_id>.json")
+    p.add_argument("--code", action="append", default=[],
+                   help="folder of code/<instance_id>.json (repeatable; searched in order)")
+    p.add_argument("--no-code-fallback", action="store_true",
+                   help="drop tasks without a code file instead of rebuilding code from the trace")
     p.add_argument("--out", required=True, help="output folder (one JSONL per stage)")
     p.add_argument("--limit", type=int, default=0)
 
 
 def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
     from ..runmeta import write_run_meta
+    from .dataset import SolvedData
 
     b = cfg["budget_locfix"]
     lc = LocFixConfig(
@@ -511,47 +519,36 @@ def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
         layout="segments" if cfg["data"].get("training_layout", "auto") in ("auto", "one_sequence") else "per_turn",
         em=cfg["em"], seed=cfg["seed"],
     )
-    rows: dict[str, dict] = {}
-    with open(args.solved) as f:
-        for line in f:
-            r = json.loads(line)
-            rows[r["instance_id"]] = r
-    exclude = [x.lower() for x in cfg["data"].get("exclude_repos", [])]
+    data = SolvedData(traces=args.traces, solved=args.solved, code_dirs=args.code,
+                      exclude_repos=cfg["data"].get("exclude_repos", []))
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {"traces": 0}
     handles: dict[str, Any] = {}
+
+    def bump(k: str) -> None:
+        counts[k] = counts.get(k, 0) + 1
+
     try:
-        for i, p in enumerate(sorted(Path(args.traces).glob("*.json"))):
+        for i, p in enumerate(data.trace_paths()):
             if args.limit and i >= args.limit:
                 break
             counts["traces"] += 1
             try:
-                tr = load_trace(p)
-                repo = parse_task_prompt(tr.task_prompt).repo.lower()
-                if any(repo.split("/")[-1] == x for x in exclude):
-                    raise TaskSkip("dev_repo")
-                row = rows.get(tr.instance_id)
-                if row is None:
-                    raise TaskSkip("not_in_solved")
-                code_path = Path(args.code) / f"{tr.instance_id}.json"
-                if not code_path.exists():
-                    raise TaskSkip("no_code_file")
-                task = Task(tr, json.loads(code_path.read_text()), row["teacher"]["patch"],
-                            row["problem_statement"], source={"set": "solved", "dataset": row.get("verifier", "other"),
-                                                              "fold": row.get("fold", "A"), "attempt": tr.attempt or 1})
+                task, info = data.task(p, code_fallback=not args.no_code_fallback)
+                bump(f"code:{info.source}")
                 recs = build_task_records(task, lc, counts)
             except TaskSkip as e:
-                counts[f"skip:{e.reason}"] = counts.get(f"skip:{e.reason}", 0) + 1
+                bump(f"skip:{e.reason}")
                 continue
             except Exception as e:  # noqa: BLE001 - count and continue, reported below
-                key = f"error:{type(e).__name__}"
-                counts[key] = counts.get(key, 0) + 1
+                bump(f"error:{type(e).__name__}")
                 print(f"[{p.name}] {type(e).__name__}: {e}")
                 continue
             for r in recs:
+                r["meta"]["code_source"] = info.source
                 if r["stage"] not in handles:
-                    handles[r["stage"]] = open(out / f"{r['stage']}.jsonl", "w")
+                    handles[r["stage"]] = open(out / f"{r['stage']}.jsonl", "w")  # noqa: SIM115
                 handles[r["stage"]].write(json.dumps(r, ensure_ascii=False) + "\n")
     finally:
         for h in handles.values():

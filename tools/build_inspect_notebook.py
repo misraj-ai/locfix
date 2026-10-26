@@ -20,17 +20,18 @@ def code(text: str) -> None:
 
 
 md("""
-# How the training data is built
+# How the training data is built — random samples from the real data
 
-This notebook shows, on real fixture tasks, what a training example looks like at each step:
+Picks a random solved task from `codeagent_final/`, builds its training records **live** with the
+same code the pipeline uses, and shows every step:
 
 ```
-teacher trace (Kimi-K3 log)
+teacher trace (Kimi-K3 log, cleaned/traces/<id>__a<N>.json)
    │  replay through the real harness code (ADK + harness tools + our agent YAML),
    │  with a scripted model that repeats the teacher's turns and recorded tool outputs
    ▼
 record   = the exact OpenAI chat messages the model receives on Kaggle + which turns are trained
-   │  Gemma 4 chat template (the same rendering vLLM does; checked by the golden test, 141/141)
+   │  Gemma 4 chat template (the same rendering vLLM does; golden check 141/141)
    ▼
 text     = one long string with special tokens
    │  tokenizer
@@ -39,12 +40,14 @@ tokens   = input_ids + labels (−100 = no loss) + loss weights   →  what the 
 ```
 
 Two setups:
-1. **Single agent** (Stage 1 baseline): one record per trajectory.
+1. **Single agent** (Stage 1 baseline): one record per trajectory (more if it has nudges).
 2. **Two agents** (our method): the fixer is the root agent and calls the localizer as a tool. One
-   teacher trajectory gives a **localizer record** (exploration → list of locations z) and a
-   **fixer record** (call localizer → read z → edit, test, submit).
+   teacher trajectory gives **localizer records** (exploration → list of locations z) and **fixer
+   records** (call localizer → read z → edit, test, submit).
 
-CPU only; no model weights. Runtime: about 1 minute.
+Needs: the code (repo or `locfix_code.zip`), the three harness wheels (the replay runs the real
+harness code), the data folder (Google Drive), and the Gemma 4 tokenizer files. CPU runtime is
+enough. Re-run section 1 to get another random task.
 """)
 
 md("## 0. Setup")
@@ -52,7 +55,7 @@ code('''
 # --- Get the code: set REPO_URL to your public repo, or leave it empty and upload locfix_code.zip
 REPO_URL = ""
 
-import os, sys, json, pathlib, subprocess
+import os, sys, json, random, pathlib, subprocess
 
 IN_COLAB = "google.colab" in sys.modules
 
@@ -80,25 +83,49 @@ sys.path.insert(0, str(ROOT / "src"))          # use the code in place (no insta
 print("code:", ROOT)
 ''')
 code('''
-# --- Python packages: only the tokenizer/chat-template stack (same transformers as Kaggle)
+# --- Data on Google Drive and the harness wheels
+DATA_DIR = "/content/drive/MyDrive/codeagent_final"     # folder with cleaned/, experiment/, ...
+WHEELS_DIR = "/content/drive/MyDrive/wheels"             # swegemma, adk_submission, adk_eval_core .whl
+
+if IN_COLAB and DATA_DIR.startswith("/content/drive"):
+    from google.colab import drive
+    drive.mount("/content/drive")
+for p in (DATA_DIR, WHEELS_DIR):
+    print(p, "found" if pathlib.Path(p).exists() else "NOT FOUND")
+''')
+code('''
+# --- Python packages: harness wheels + ADK (replay), transformers 5.13.1 (tokenizer/chat template)
+import importlib.util
+
+def missing(mod):
+    return importlib.util.find_spec(mod) is None
+
+need = []
+if missing("swegemma") or missing("adk_submission"):
+    wheels = sorted(str(p) for p in pathlib.Path(WHEELS_DIR).glob("*.whl"))
+    assert wheels, f"no .whl files in {WHEELS_DIR}"
+    need += [*wheels, "google-adk>=1.34,<2", "litellm", "mcp>=2"]
 import importlib.metadata as md
 try:
-    have = md.version("transformers")
+    tf_ok = md.version("transformers") == "5.13.1"
 except md.PackageNotFoundError:
-    have = None
-if have != "5.13.1":
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "transformers==5.13.1",
-                    "pyyaml", "jsonschema", "pandas"], check=True)
-print("transformers", md.version("transformers"))
+    tf_ok = False
+if not tf_ok:
+    need += ["transformers==5.13.1"]
+if need:
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *need, "pyyaml", "jsonschema", "pandas"],
+                   check=True)
+print("transformers", md.version("transformers"), "| google-adk", md.version("google-adk"),
+      "| swegemma", md.version("swegemma"))
 ''')
 code('''
 # --- Gemma 4 tokenizer + chat template (3 small files, no weights)
 # TOKENIZER_SOURCE:
 #   "kaggle"  download tokenizer.json, tokenizer_config.json, chat_template.jinja from the Kaggle
-#             model (needs Kaggle credentials in Colab secrets or kagglehub.login(), and the Gemma 4
-#             license accepted on Kaggle)
+#             model (Kaggle credentials in Colab secrets or kagglehub.login(); Gemma 4 license
+#             accepted on Kaggle)
 #   "upload"  upload e4b.zip (the model folder without weights)
-#   a folder path that already holds the three files
+#   a folder path that already holds the three files (e.g. on Drive)
 TOKENIZER_SOURCE = "kaggle"
 KAGGLE_HANDLE = "google/gemma-4/other/gemma-4-e4b-it-qat-w4a16-ct/2"
 TOKENIZER_FILES = ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja"]
@@ -124,14 +151,14 @@ tok = load_tokenizer(TOKENIZER_DIR)
 print("tokenizer:", TOKENIZER_DIR, "| vocab", len(tok))
 ''')
 code('''
-# --- Display helpers and the fixture data
+# --- Display helpers
 import pandas as pd
 from IPython.display import HTML, Markdown, display
 
 from locfix.render import inspect as I
 
 pd.set_option("display.max_colwidth", None)
-pd.set_option("display.max_rows", 200)
+pd.set_option("display.max_rows", 300)
 
 
 def table(rows):
@@ -141,51 +168,84 @@ def table(rows):
 
 def show_json(obj):
     display(Markdown("```json\\n" + json.dumps(obj, indent=1, ensure_ascii=False) + "\\n```"))
-
-
-FIX = ROOT / "tests" / "fixtures"
-load_jsonl = lambda p: [json.loads(line) for line in open(p)]
-TASK = "benoitc__gunicorn"                     # the example task (short: 13 turns, 2 edits)
-trace_path = next((FIX / "traces").glob(TASK + "*.json"))
-trace = json.loads(trace_path.read_text())
 ''')
+
+md("""
+## 1. Pick a random task and build its records
+
+`SEED = None` gives a new task on every run; set an integer to reproduce one, or `INSTANCE` to a
+task id. A task is skipped (and another one drawn) when it cannot give both kinds of records; the
+reason is printed (e.g. `over budget`: the trajectory needs more tool calls than our budget).
+
+**Code at the base commit** (needed for the fixer's reads of z): taken from `code/<id>.json` when
+the data has one; otherwise rebuilt from the lines the teacher printed, and reads are limited to
+those lines (`code: trace` below).
+""")
 code('''
-# --- Records: by default the ones stored in the repo (built by exactly this code). Set REBUILD to
-# rebuild them here from the traces; that needs the private harness wheels (swegemma, adk_submission,
-# adk_eval_core) uploaded to ROOT/vendor, because the replay runs the real harness code.
-REBUILD = False
+SEED = None            # None = random every run
+INSTANCE = None        # e.g. "benoitc__gunicorn.bacbf8aa.lm_rewrite__9mzalywg" to pick one task
+MAX_TRIES = 25
 
-if REBUILD:
-    wheels = sorted(str(p) for p in (ROOT / "vendor").glob("*.whl"))
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *wheels,
-                    "google-adk>=1.34,<2", "litellm", "mcp>=2"], check=True)
-    from locfix.config import load_config
-    from locfix.data.agent_records import BuildConfig, build_agent_records
-    from locfix.data.loc_fix_records import LocFixConfig, Task, build_task_records, patch_from_edits
-    from locfix.data.traces import load_trace
-    from locfix.harness.prompts import parse_task_prompt
+from locfix.config import load_config
+from locfix.data.agent_records import BuildConfig, build_agent_records
+from locfix.data.dataset import SolvedData
+from locfix.data.loc_fix_records import LocFixConfig, TaskSkip, build_task_records
+from locfix.harness.budget import BudgetExceeded
+from locfix.harness.prompts import Budget
 
-    tr = load_trace(trace_path)
-    src = {"set": "solved", "dataset": "fixture", "fold": "A", "attempt": 1}
-    s1 = build_agent_records(tr, BuildConfig(agent_dir="agents/single"), src)
-    files = json.loads((FIX / "code" / f"{tr.instance_id}.json").read_text())
-    task = Task(tr, files, patch_from_edits(tr, files, strict=False),
-                parse_task_prompt(tr.task_prompt).problem_statement, source=src)
-    lf = build_task_records(task, LocFixConfig(em=load_config()["em"]))
+cfg = load_config()
+data = SolvedData(DATA_DIR, exclude_repos=cfg["data"]["exclude_repos"])
+print(f"{len(data.trace_paths())} traces, {len(data.rows)} solved rows; code folders:",
+      [str(d) for d in data.code_dirs if d.exists()] or "none (code rebuilt from traces)")
+
+b, bl = cfg["budget"], cfg["budget_locfix"]
+bc = BuildConfig(agent_dir="agents/single", model_alias=cfg["models"]["31b"]["serve_id"],
+                 budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]))
+lc = LocFixConfig(agent_dir="agents/locfix", model_alias=cfg["models"]["31b"]["serve_id"],
+                  budget=Budget(bl["max_time_minutes"], bl["max_tool_calls"], bl["max_turns"]),
+                  em=cfg["em"], seed=cfg["seed"])
+
+rng = random.Random(SEED)
+paths = data.trace_paths()
+if INSTANCE:
+    paths = [p for p in paths if p.name.startswith(INSTANCE)]
+rng.shuffle(paths)
+for trace_path in paths[:MAX_TRIES]:
+    try:
+        task, code_info = data.task(trace_path)
+        s1 = build_agent_records(task.trace, bc, task.source, task.problem_statement)
+        counts = {}
+        lf = build_task_records(task, lc, counts)
+    except BudgetExceeded as e:
+        print(f"skip {trace_path.name}: over budget ({e})")
+        continue
+    except TaskSkip as e:
+        print(f"skip {trace_path.name}: {e}")
+        continue
+    if not lf:
+        print(f"skip {trace_path.name}: no localizer/fixer records {counts}")
+        continue
+    break
 else:
-    s1 = load_jsonl(FIX / "records" / "s1_fixtures.jsonl")
-    lf = load_jsonl(FIX / "records" / "locfix_fixtures.jsonl")
-print(len(s1), "single-agent records,", len(lf), "localizer/fixer records")
+    raise RuntimeError("no usable task found; raise MAX_TRIES")
+
+trace = task.trace
+row = data.row(task.instance_id)
+show_json({"instance_id": task.instance_id, "trace": trace_path.name, "repo": row.get("repo"),
+           "dataset": row.get("verifier"), "fold": row.get("fold"),
+           "teacher tool calls": trace.n_counted_calls, "teacher turns": len(trace.turns),
+           "code": code_info.source, "code coverage (trace)": code_info.coverage,
+           "records": {"single agent": len(s1), "localizer/fixer": counts}})
 ''')
 
 md("""
 ## 1. The input: one teacher trace
 
-The raw log of Kimi-K3 solving the task with **our harness**: system instruction, task prompt, then
-`thinking`, `tool_call`, `tool_response` entries and the final text. It was recorded with the
-teacher's budget (8 minutes, 100 tool calls).
+The raw log of Kimi-K3 solving the task with **our harness** (after recall cleaning): system
+instruction, task prompt, then `thinking`, `tool_call`, `tool_response` entries and the final
+text. It was recorded with the teacher's budget (8 minutes, 100 tool calls).
 """)
-code('table(I.trace_rows(trace["entries"], 140))')
+code('table(I.trace_rows(trace.entries, 140))')
 
 md("""
 ## 2. Single agent (Stage 1)
@@ -208,7 +268,8 @@ each other form one record. Mapping:
 identical call).
 """)
 code('''
-rec = next(r for r in s1 if TASK in r["id"])
+table([I.record_summary(r) | {"tools": len(r["tools"])} for r in s1])
+rec = s1[0]                       # the first window (a nudge starts a new one)
 show_json(I.record_summary(rec))
 table(I.message_rows(rec))
 ''')
@@ -217,8 +278,7 @@ code('''
 import difflib
 sys_rec = I.content_text(rec["messages"][0])
 user_rec = I.content_text(rec["messages"][1])
-teacher_sys = next(e["content"] for e in trace["entries"] if e["type"] == "system_instruction")
-teacher_user = next(e["content"] for e in trace["entries"] if e["type"] == "task_prompt")
+teacher_sys, teacher_user = trace.system_instruction, trace.task_prompt
 for name, a, b in (("system", teacher_sys, sys_rec), ("task prompt", teacher_user, user_rec)):
     print(f"--- {name}: teacher -> record")
     print("\\n".join(difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)) or "(identical)")
@@ -294,7 +354,7 @@ One trace gives several variants of z (the paper's Stage 2/3 data):
 | gold_minus_one | gold minus one context item | fixer `s2_fix_noisy` |
 """)
 code('''
-recs = [r for r in lf if TASK in r["id"]]
+recs = lf
 table([{"stage": r["stage"], "role": r["role"], "variant": r["meta"]["variant"],
         "messages": len(r["messages"]), "trained turns": len(r["loss"]),
         "requests": ", ".join(q["via"] for q in r["meta"].get("requests", [])),
@@ -303,7 +363,7 @@ table([{"stage": r["stage"], "role": r["role"], "variant": r["meta"]["variant"],
 
 md("### 3.1 Localizer record (`s2_loc_edit`)\n\nIts own system prompt (`agents/locfix/sub_agents/prompts/localizer.md`, with the issue filled in), the fixer's request as the user message, the teacher's exploration, and z as the final answer.")
 code('''
-loc = next(r for r in recs if r["stage"] == "s2_loc_edit")
+loc = next((r for r in recs if r["stage"] == "s2_loc_edit"), next(r for r in recs if r["role"] == "localizer"))
 table(I.message_rows(loc))
 print("final answer (z):")
 show_json(json.loads(loc["messages"][-1]["content"]))
@@ -313,15 +373,17 @@ display(HTML(I.rendered_html(RL)))
 ''')
 
 md("""
-### 3.2 Fixer record (`s2_fix_noisy`, variant `edit_only`)
+### 3.2 Fixer record with an incomplete z (`s2_fix_noisy`)
 
-z contains only the edited function, so the fixer also reads the other code the teacher looked at
-(`requests`). Note message 3: the localizer's answer arrives wrapped by ADK as
+z misses some of what the teacher looked at, so the fixer recovers it (`requests`: read what it
+can already name, or reuse a teacher `grep`). Note message 3: the localizer's answer arrives wrapped by ADK as
 `{"result": "<z JSON>"}`. Synthetic turns (call localizer, read z, requests) use short templated
 thinking; from the first edit on, everything is the teacher's.
 """)
 code('''
-fx = next(r for r in recs if r["stage"] == "s2_fix_noisy" and r["meta"]["variant"] == "edit_only")
+fx = next((r for r in recs if r["stage"] == "s2_fix_noisy" and r["meta"].get("requests")),
+          next(r for r in recs if r["role"] == "fixer"))
+print("variant:", fx["meta"]["variant"], "| requests:", [q["via"] for q in fx["meta"].get("requests", [])])
 table(I.message_rows(fx))
 RF = render_record(fx, tok)
 show_json(I.rendered_stats(RF))
@@ -330,16 +392,17 @@ display(HTML(I.rendered_html(RF)))
 
 md("### 3.3 Fixer record with the full z (`s2_fix_gold`): no requests needed")
 code('''
-fg = next(r for r in recs if r["stage"] == "s2_fix_gold")
-table(I.message_rows(fg)[:8])
+fg = next((r for r in recs if r["stage"] == "s2_fix_gold"), None)
+if fg is not None:
+    table(I.message_rows(fg)[:10])
 ''')
 
-md("## 4. All fixture records")
+md("## 4. All records of this task")
 code('''
 rows = []
 for r in s1 + lf:
     x = render_record(r, tok)
-    rows.append({"task": r["instance_id"].split(".")[0], "stage": r["stage"], "role": r["role"],
+    rows.append({"stage": r["stage"], "role": r["role"],
                  "variant": r["meta"].get("variant", ""), **I.rendered_stats(x)})
 table(rows)
 ''')
