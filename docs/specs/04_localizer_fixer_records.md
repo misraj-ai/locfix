@@ -12,7 +12,7 @@ exactly what the harness produces; this spec defines *what* is replayed.
 ```
 agents/locfix/agent.yaml              # fixer, adapter: fix_lora
   tools: run_command, read_file, edit_file, write_file, get_status, submit_patch,
-         agent_tool: {config_path: sub_agents/localizer.yaml, skip_summarization: true}
+         agent_tool: {config_path: sub_agents/localizer.yaml, skip_summarization: false}
 agents/locfix/sub_agents/localizer.yaml   # localizer, adapter: loc_lora
   tools: run_command, read_file
   instruction: uses {problem_description}; ends by returning z as JSON (format below)
@@ -20,8 +20,12 @@ agents/locfix/sub_agents/localizer.yaml   # localizer, adapter: loc_lora
 
 - The fixer calls the localizer with one string argument `request` (ADK `AgentTool`), first to get
   z, and again later if it needs more context ("find where X is defined").
+- `skip_summarization` must be `false`: with `true` the fixer's turn ends after the call and the
+  harness injects a continuation nudge (harness_facts §15).
 - The localizer runs in a fresh session (copy of the parent's state), **without compaction**
-  (VERIFY item 4, spec 02), and its tool calls count toward the same task budget. Its exploration
+  (harness_facts §9 item 4), and its tool calls count toward the same task budget. The locfix
+  agent therefore gets its own budget, `budget_locfix` (40 calls, 5 min), because the fixer's reads
+  of z come on top of the exploration. Its exploration
   must therefore stay short: cap at `em.localizer_max_calls` (default 12) and within 32K tokens.
 - "Single model, two roles" ablation: same YAMLs, one adapter for both.
 - Drafts of both instructions are in `agents/locfix/`. ADK fills `{name}` placeholders from
@@ -128,6 +132,10 @@ is_truncated`, the 150-line and 10,000-character caps, `end_line` = last complet
 `filepath` echoed as passed. Synthetic `grep` outputs are never generated; only recorded ones are
 reused.
 
+**Correction (harness_facts §15):** at the 10,000-character cap the harness cuts `content`
+mid-line and keeps the line-capped `end_line`. Synthetic reads are sized (≤150 lines and ≤10,000
+characters, `chunk_range`) so that every output is complete.
+
 **Test:** for every teacher `read_file` call made before its first edit (thousands in the data),
 rendering from `code/<id>.json` must reproduce the recorded output exactly.
 
@@ -163,3 +171,33 @@ main set, tasks with a code file.
 - A replayed fixer record with requests passes the golden structure check (spec 03) and its
   localizer tool call/result match capture C (spec 02).
 - Manifest per stage: records per source and variant, fraction with requests, drops per reason.
+
+## Implementation status (2026-10-25)
+
+Implemented in `src/locfix/data/loc_fix_records.py` (+ `render_obs.py`, `zloc.py`, multi-agent
+routing in `harness/replay.py`); CLI `locfix data.locfix-records`; tests in
+`tests/test_loc_fix_records.py` on the four fixtures with base-commit code rebuilt by
+`tools/build_fixture_code.py` (upstream file + every line the teacher saw, verified by replaying
+all recorded reads, seds and edit diffs).
+
+- One replay per (task, z variant) runs both agents; records are cut per stream. Variants for a
+  solved task: `gold` (N pruned; fixer `s2_fix_gold`, localizer `s3_loc_r0`), `edit_only`
+  (`s2_loc_edit`, fixer `s2_fix_noisy`), `view_only` (`s2_loc_view`, fixer `s2_fix_noisy`; items
+  the teacher edited are marked `edit`), `gold_minus_one` (`s2_fix_noisy`). A fixer record whose z
+  equals an earlier variant's is not emitted twice.
+- Localizer stream: pre-edit teacher turns restricted to `run_command`/`read_file`; thoughts of
+  turns left without a call are carried into the next turn; final thinking is the template
+  `localizer_answer` (the teacher's pre-edit thinking usually already discusses the fix).
+- Requests: repeated rounds of "read every missing location the fixer can already name (path or
+  symbol name in what it has seen, including the workspace tree)" in one turn, else a recorded
+  teacher search whose output names the file. Re-calling the localizer for a missing item is not
+  generated yet (it needs a localizer exploration we do not have); such items are dropped
+  (context) or make the variant `impossible_input` (edit).
+- Reference check: reported per record (`meta.dangling_refs`), not enforced; on the fixtures the
+  only hits are standard-library names and English words in backticks. Decide on enforcement after
+  measuring on the full data.
+- Not yet: callers/callees and BM25 candidates (spec 06 `em/candidates.py`), unsolved set (§9),
+  the localizer's 32K-token filter (the trainer drops records over `train.max_seq_len`).
+
+Fixture results (budget_locfix): 4/4 tasks, 0 drops; records per stage: s2_fix_gold 4,
+s2_fix_noisy 8, s2_loc_edit 4, s2_loc_view 4, s3_loc_r0 4; longest record 19.7K tokens.

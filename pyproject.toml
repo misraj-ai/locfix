@@ -40,3 +40,11 @@ addopts = "-m 'not gpu and not hf and not vllm'"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP"]
+ignore = ["E501"]          # long lines are allowed where they keep a table or a message readable
+
+[tool.ruff.lint.per-file-ignores]
+"tools/*.py" = ["E402"]                              # scripts put src/ on sys.path first
+"notebooks/*_standalone.py" = ["E402", "F811"]       # generated single-file scripts

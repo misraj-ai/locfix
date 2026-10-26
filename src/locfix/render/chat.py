@@ -24,7 +24,8 @@ import copy
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 TOOL_RESPONSE_START = "<|tool_response>"
 TURN_END = "<turn|>"

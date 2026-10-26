@@ -25,11 +25,13 @@ models:
   e4b:
     serve_id: gemma-4-e4b-it-qat-w4a16-ct
     hf_ct: google/gemma-4-e4b-it-qat-w4a16-ct
+    kaggle: google/gemma-4/other/gemma-4-e4b-it-qat-w4a16-ct/2      # where the checkpoint is available
     dequantized: ${paths.models}/gemma4-e4b-w4a16-dequant-bf16
     lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]  # confirm vs vLLM (spec 01)
   31b:
     serve_id: gemma-4-31b-it-qat-w4a16-ct
     hf_ct: google/gemma-4-31b-it-qat-w4a16-ct
+    kaggle: google/gemma-4/other/gemma-4-31b-it-qat-w4a16-ct/2
     dequantized: ${paths.models}/gemma4-31b-w4a16-dequant-bf16
     lora_targets: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]  # k/v sharing check (spec 01)
   12b:
@@ -54,6 +56,11 @@ budget:                        # eval_config.yaml of the submission; records are
   max_tool_calls: 30           # warning fires at <= 10 remaining
   max_turns: 300
   time_filter_fraction: 0.9    # drop trajectories whose projected time > 0.9 x cap
+
+budget_locfix:                 # agents/locfix/eval_config.yaml. The localizer's calls and the fixer's
+  max_time_minutes: 5          # reads of z share one task budget, so the two-agent structure needs
+  max_tool_calls: 40           # more calls than the single agent for the same work (spec 04 §5)
+  max_turns: 300
 
 timing:                        # from timing (spec 07); tokens/s on Kaggle 4xL4
   e4b: {prefill_tps: null, decode_tps: null, setup_seconds: null}

@@ -43,7 +43,7 @@ def write_run_meta(out_dir: str | Path, config: dict, extra: dict[str, Any] | No
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     meta = {
-        "created": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "created": _dt.datetime.now(_dt.UTC).isoformat(),
         "argv": sys.argv,
         "git_sha": git_sha(),
         "python": platform.python_version(),

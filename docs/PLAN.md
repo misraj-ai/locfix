@@ -13,7 +13,7 @@ E2B/E4B submission.
 | Training stack | TRL `SFTTrainer` subclass + PEFT + Accelerate (DDP/FSDP2) + Liger kernels | spec 05 |
 | Versions | serve: vLLM 0.19.1 + transformers 5.13.1 (Kaggle wheelhouse); train: same transformers if possible | |
 | Scoring / rollouts / eval | vLLM on the real `-w4a16-ct` base with multi-LoRA | specs 06, 07 |
-| Agent structure | Single agent (baseline). Ours: **fixer = root agent, localizer = `agent_tool` sub-agent** (`skip_summarization: true`); the fixer can call it again for more context | spec 04 |
+| Agent structure | Single agent (baseline). Ours: **fixer = root agent, localizer = `agent_tool` sub-agent** (`skip_summarization: false`: `true` ends the fixer's turn and triggers a harness nudge); the fixer can call it again for more context | spec 04 |
 | Tools | harness tools only: `run_command`, `read_file`, `edit_file`, `write_file`, `get_status`, `submit_patch` (graph tools dropped from trained agents; keeping them is an ablation) | |
 | Thoughts | `include_thoughts: true` by default; Stage 0 checks on/off | |
 | Budget | 5 min per task, ~30 tool calls (the warning fires at ≤10 remaining), turns as now; final values from Kaggle timing runs | spec 07 |

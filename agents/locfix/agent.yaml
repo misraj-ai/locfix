@@ -12,5 +12,5 @@ tools:
   - submit_patch
   - agent_tool:
       config_path: sub_agents/localizer.yaml
-      skip_summarization: true
+      skip_summarization: false    # true ends the fixer turn after the call -> harness nudge (harness_facts §15)
 generate_content_config: !include configs/sampling.yaml

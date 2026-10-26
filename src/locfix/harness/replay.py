@@ -12,10 +12,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from .scripted_server import Exchange, ScriptedServer, chat_response
 
@@ -53,9 +55,16 @@ Step = ScriptTurn | ScriptNudge
 @dataclass
 class ReplayResult:
     exchanges: list[Exchange]                # every request/response, in order
-    agent_exchanges: list[Exchange]          # only the agent's own model calls (no summarizer)
+    agent_exchanges: list[Exchange]          # only the agents' own model calls (no summarizer)
     turn_meta: list[dict[str, Any]]          # meta of the ScriptTurn answering each agent exchange
     initial_prompt: str
+    streams: list[str | None] = field(default_factory=list)   # agent name per agent exchange
+
+    def of_stream(self, name: str | None) -> ReplayResult:
+        """The exchanges of one agent (e.g. only the localizer sub-agent's model calls)."""
+        keep = [i for i, s in enumerate(self.streams) if s == name]
+        return ReplayResult(self.exchanges, [self.agent_exchanges[i] for i in keep],
+                            [self.turn_meta[i] for i in keep], self.initial_prompt, [name] * len(keep))
 
 
 def estimate_prompt_tokens(req: dict[str, Any]) -> int:
@@ -99,21 +108,66 @@ def _is_summarizer_request(req: dict[str, Any]) -> bool:
     return False
 
 
+_AGENT_NAME = re.compile(r'Your internal name is "([^"]+)"')
+
+
+def agent_name_of(req: dict[str, Any]) -> str | None:
+    """Name of the agent that sent a model request (ADK appends it to the system instruction)."""
+    for m in req.get("messages", []):
+        if m.get("role") != "system":
+            continue
+        c = m.get("content")
+        text = c if isinstance(c, str) else json.dumps(c)
+        found = _AGENT_NAME.findall(text)
+        if found:
+            return found[-1]
+    return None
+
+
 def _normalize_args(args: dict[str, Any]) -> str:
     return json.dumps(args, sort_keys=True, ensure_ascii=False)
 
 
 class _Player:
-    """Serves scripted turns to the model endpoint and recorded results to the tools."""
+    """Serves scripted turns to the model endpoint and recorded results to the tools.
 
-    def __init__(self, steps: list[Step], summarizer: Callable[[dict], dict] | None,
-                 prompt_token_counter: Callable[[dict], int] | None = None):
-        self.steps = deque(steps)
+    `steps` is one script (any agent may ask) or {agent name: script} when sub-agents run as tools:
+    requests are routed by the agent name ADK puts in the system instruction. Execution is
+    sequential (a parent waits for its `agent_tool` call), so one queue of pending tool calls
+    suffices. Calls to tools that are not harness tools are `agent_tool` calls: ADK runs the
+    sub-agent itself, so they are not served here; their `result` is ignored."""
+
+    def __init__(self, steps: list[Step] | dict[str, list[Step]], summarizer: Callable[[dict], dict] | None,
+                 prompt_token_counter: Callable[[dict], int] | None = None,
+                 harness_tools: set[str] | None = None):
+        if isinstance(steps, dict):
+            self.streams: dict[str | None, deque[Step]] = {k: deque(v) for k, v in steps.items()}
+        else:
+            self.streams = {None: deque(steps)}
         self.summarizer = summarizer
         self.count_tokens = prompt_token_counter or estimate_prompt_tokens
+        self.harness_tools = harness_tools
         self.pending_calls: deque[ScriptCall] = deque()
         self.turn_meta: list[dict[str, Any]] = []
+        self.stream_of_turn: list[str | None] = []
+        self.agent_calls: list[tuple[str, dict[str, Any]]] = []
         self.n_turns = 0
+
+    def queue(self, name: str | None) -> deque[Step]:
+        if None in self.streams:
+            return self.streams[None]
+        if name not in self.streams:
+            raise ReplayError(f"model request from agent {name!r}, which has no script "
+                              f"(scripts: {sorted(map(str, self.streams))})")
+        return self.streams[name]
+
+    @property
+    def steps(self) -> deque[Step]:
+        """The root script (single-script replays)."""
+        return next(iter(self.streams.values()))
+
+    def is_agent_call(self, tool: str) -> bool:
+        return self.harness_tools is not None and tool not in self.harness_tools
 
     # model side --------------------------------------------------------------------
     def handle(self, req: dict[str, Any]) -> dict[str, Any]:
@@ -123,16 +177,25 @@ class _Player:
             return self.summarizer(req)
         if self.pending_calls:
             raise ReplayError(f"model called again with {len(self.pending_calls)} tool call(s) unanswered")
-        if not self.steps or not isinstance(self.steps[0], ScriptTurn):
-            nxt = type(self.steps[0]).__name__ if self.steps else "end of script"
-            raise ReplayError(f"model request #{self.n_turns + 1} but the script expects {nxt}")
-        turn: ScriptTurn = self.steps.popleft()  # type: ignore[assignment]
+        name = agent_name_of(req)
+        steps = self.queue(name)
+        if not steps or not isinstance(steps[0], ScriptTurn):
+            nxt = type(steps[0]).__name__ if steps else "end of script"
+            raise ReplayError(f"model request #{self.n_turns + 1} ({name}) but the script expects {nxt}")
+        turn: ScriptTurn = steps.popleft()  # type: ignore[assignment]
         tool_calls = []
+        agent_calls = [c for c in turn.calls if self.is_agent_call(c.tool)]
+        if agent_calls and len(turn.calls) > 1:
+            raise ReplayError("an agent_tool call must be the only call of its turn")
         for j, c in enumerate(turn.calls):
             tool_calls.append({"id": f"call_{self.n_turns}_{j}", "type": "function",
                                "function": {"name": c.tool, "arguments": json.dumps(c.args, ensure_ascii=False)}})
-            self.pending_calls.append(c)
+            if self.is_agent_call(c.tool):
+                self.agent_calls.append((c.tool, c.args))
+            else:
+                self.pending_calls.append(c)
         self.turn_meta.append(turn.meta)
+        self.stream_of_turn.append(name)
         self.n_turns += 1
         n = int(self.count_tokens(req))
         return chat_response(req.get("model", "scripted"), turn.text, turn.thinking, tool_calls or None,
@@ -178,7 +241,7 @@ def replay_tools(player: _Player, names: list[str] | None = None) -> dict[str, C
 
 
 async def replay_async(
-    steps: list[Step],
+    steps: list[Step] | dict[str, list[Step]],
     agent_dir: str | Path,
     initial_prompt: str,
     problem_statement: str,
@@ -200,7 +263,9 @@ async def replay_async(
     from google.genai import types as genai_types
     from swegemma.harness.agent_runner import ToolErrorPlugin, resolve_swegemma_adapter
 
-    player = _Player(steps, summarizer, prompt_token_counter)
+    from swegemma.tools import create_tools
+
+    player = _Player(steps, summarizer, prompt_token_counter, harness_tools=set(create_tools(_Ctx())))
     with ScriptedServer(player.handle) as server:
         install_litellm_reasoning_patch()
         models = ModelRegistry()
@@ -233,19 +298,32 @@ async def replay_async(
             errors = [e.error for e in server.exchanges if e.error]
             if errors:
                 raise ReplayError(errors[0])
-            if not player.steps:
+            root = player.queue(agent.name)
+            if not root:
                 break
-            step = player.steps.popleft()
+            step = root.popleft()
             if not isinstance(step, ScriptNudge):
                 raise ReplayError("agent stopped (text-only turn) but the script continues with a model turn")
             message = genai_types.Content(role="user", parts=[genai_types.Part(text=step.content)])
         if player.pending_calls:
             raise ReplayError(f"{len(player.pending_calls)} scripted tool call(s) were never made")
+        left = {k: len(v) for k, v in player.streams.items() if v}
+        if left:
+            raise ReplayError(f"script steps never used: {left}")
         exchanges = list(server.exchanges)
 
     agent_ex = [e for e in exchanges if not _is_summarizer_request(e.request)]
-    return ReplayResult(exchanges, agent_ex, player.turn_meta, initial_prompt)
+    return ReplayResult(exchanges, agent_ex, player.turn_meta, initial_prompt, player.stream_of_turn)
 
 
 def replay(*args: Any, **kwargs: Any) -> ReplayResult:
-    return asyncio.run(replay_async(*args, **kwargs))
+    """Synchronous wrapper. Inside a running event loop (Jupyter/Colab) the replay runs in a worker
+    thread with its own loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(replay_async(*args, **kwargs))
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, replay_async(*args, **kwargs)).result()

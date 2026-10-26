@@ -18,6 +18,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "data.traces-stats": ("locfix.data.traces:cmd_stats", "statistics over a folder of traces"),
     "data.agent-records": ("locfix.data.agent_records:cmd_agent_records",
                            "Stage 1 records: replay teacher traces through the agent stack"),
+    "data.locfix-records": ("locfix.data.loc_fix_records:cmd_locfix_records",
+                            "Stage 2 / round-0 localizer and fixer records (fixer root + localizer agent_tool)"),
 }
 
 

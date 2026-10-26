@@ -14,7 +14,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -122,7 +123,7 @@ class ScriptedServer:
         host, port = self._httpd.server_address[:2]
         return f"http://{host}:{port}/v1"
 
-    def __enter__(self) -> "ScriptedServer":
+    def __enter__(self) -> ScriptedServer:
         for var in ("NO_PROXY", "no_proxy"):
             cur = os.environ.get(var, "")
             if "127.0.0.1" not in cur:

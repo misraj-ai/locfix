@@ -26,7 +26,7 @@ the proxy (the harness binds `LiteLlm(model="openai/<served>", api_base=...)`; p
 | --- | --- | --- |
 | A | single agent, our tools, `include_thoughts: true` | baseline format, thought history |
 | B | same, `include_thoughts: false` | what history looks like without thoughts |
-| C | fixer root + localizer as `agent_tool` (`skip_summarization: true`) | sub-agent input/output format |
+| C | fixer root + localizer as `agent_tool` (`skip_summarization: false`) | sub-agent input/output format |
 | D | single agent on a task that runs past 14,336 prompt tokens (raise budgets if needed) | compaction format |
 | E | a run that hits a nudge (e.g. `max_output_tokens` small) and a budget warning (`max_tool_calls: 22`) | nudge and warning formats |
 

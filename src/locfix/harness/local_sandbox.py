@@ -91,7 +91,7 @@ class LocalWorkspace:
             self.write_text(rel, text)
         self.ctx = LocalToolContext(self.root)
 
-    def __enter__(self) -> "LocalWorkspace":
+    def __enter__(self) -> LocalWorkspace:
         return self
 
     def __exit__(self, *exc) -> None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from typing import Iterable
+from collections.abc import Iterable
 
 HEADER_RE = re.compile(r"\AYou are evaluating a software engineering task for repository (?P<repo>.+?)\.\n\nProblem Statement:\n")
 TREE_INTRO = "## Workspace Layout\nThe repository is located at `/workspace`. Here is the directory tree (up to 3 levels):\n```\n"

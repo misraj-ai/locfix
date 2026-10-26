@@ -109,10 +109,10 @@ Declared tools are collected across the whole agent tree, including `agent_tool`
 
 | # | Question | Answer |
 | --- | --- | --- |
-| 1 | Message fields and rendering of earlier thoughts | **From the chat template + vLLM source (2026-10-25):** ADK sends `reasoning_content` and `reasoning`; vLLM reads only `reasoning`. The template renders an assistant message's thinking only if it has tool calls **and** comes after the last user message, so a nudge or a compaction summary erases earlier thoughts; text-only turns never show their thinking in history. Golden check vs vLLM pending (`notebooks/golden_render_check.py`). |
+| 1 | Message fields and rendering of earlier thoughts | **From the chat template + vLLM source (2026-10-25):** ADK sends `reasoning_content` and `reasoning`; vLLM reads only `reasoning`. The template renders an assistant message's thinking only if it has tool calls **and** comes after the last user message, so a nudge or a compaction summary erases earlier thoughts; text-only turns never show their thinking in history. **Golden check passed** (Kaggle, vLLM 0.19.1, E4B, 2026-10-25): 63/63 prompts token-identical to `/v1/chat/completions/render`. Re-run with the localizer/fixer records added (2026-10-26): **141/141**. |
 | 2 | Tool call / tool result serialization, parallel calls | LiteLLM sends arguments as JSON strings; vLLM `_postprocess_messages` parses them to dicts, and the template renders `<\|tool_call>call:name{key:<\|"\|>value<\|"\|>,...}<tool_call\|>` (keys sorted). Tool results (`role: tool`, JSON string content, unchanged from the harness) render inside the same model turn as `<\|tool_response>response:name{value:...}<tool_response\|>`. The whole trajectory is one model turn; a tool-call turn ends with the generated `<\|tool_response>` token. Visible text on a tool-call message is rendered **after** the tool responses. Content format detected by vLLM: `openai` (system prompt rendered with a trailing space). ADK appends `You are an agent. Your internal name is "<name>".` to the system instruction. |
-| 3 | `agent_tool` schema seen by the root and result wrapper | |
-| 4 | Sub-agent: prompt, compaction inside it, shared budget | |
+| 3 | `agent_tool` schema seen by the root and result wrapper | **From ADK 1.39.1 + scripted replay of `agents/locfix` (2026-10-25):** the root sees a tool named after the sub-agent (`localizer`) with description = the sub-agent's `description` and parameters `{request: string}` (required). The result reaches the root as a tool message whose content is `{"result": "<sub-agent's final text>"}` (ADK wraps non-dict returns). See §15. |
+| 4 | Sub-agent: prompt, compaction inside it, shared budget | **From ADK 1.39.1 + replay:** system = the sub-agent's instruction with `{problem_description}` filled from the copied state (a literal JSON example with braces is left intact) + `You are an agent. Your internal name is "localizer". The description about you is "<description>".`; user = the `request` text; tools = the sub-agent's own. The child `Runner` gets no compaction config, so **no compaction inside the sub-agent**. Its tool calls run the same harness tool callables, so they count toward the task's tool budget. Confirm on a live capture (session C). |
 | 5 | Compaction request layout, summarizer model, trigger | **From ADK 1.39.1 code + replay:** trigger = latest model response's `usage.prompt_tokens` ≥ `token_threshold` (falls back to chars/4 only if usage is missing); summarizer = `LlmEventSummarizer` on the **root agent's own model (with its adapter)**; the summary enters later requests as a user message with parts `For context:` and `[model] said: <summary>`, followed by the last `event_retention_size` events. Confirm on a live capture (session D). |
 | 6 | Nudge and warning appearance in requests | |
 | 7 | vLLM and transformers versions in the Kaggle wheelhouse | **vLLM 0.19.1, transformers 5.13.1** (from the team, 2026-10-24) |
@@ -129,7 +129,10 @@ Declared tools are collected across the whole agent tree, including `agent_tool`
   instruction; the user message is the `request` text; state deltas are forwarded to the parent.
 - Result: the sub-agent's last content parts that are **not thoughts**, joined with newlines
   (validated against an output schema if one is set).
-- `skip_summarization: true` sets `tool_context.actions.skip_summarization`.
+- `skip_summarization: true` sets `tool_context.actions.skip_summarization`, which makes the
+  function-response event a final response: the parent's LLM flow **stops** after the call, and
+  the harness's outer loop then sends a continuation nudge (§15). Use `false` for a sub-agent whose
+  answer the parent must act on.
 - The child runner is built from the agent only (not the App), so the App's compaction config is
   expected **not** to apply inside it (VERIFY 4).
 
@@ -186,3 +189,34 @@ Declared tools are collected across the whole agent tree, including `agent_tool`
   Export copies the trained `k_proj` LoRA to `v_proj` there; the parity test decides whether that
   matches training (the dummy adapter in the check already includes the copy).
 - `use_rslora` is honoured by vLLM's `PEFTHelper`; we keep standard scaling.
+
+## 14. Golden render check (Kaggle, 2026-10-25)
+
+`notebooks/golden_render_check_standalone.py` on the E4B `-ct` model with vLLM 0.19.1: for every
+trained turn of the four fixture records (63 prompts), `locfix.render.chat` produced exactly the
+token ids of vLLM's `/v1/chat/completions/render`. vLLM logged "Detected the chat template content
+format to be 'openai'", and that it uses the model's `generation_config.json` sampling defaults
+(temperature 1.0, top_k 64, top_p 0.95) unless the request sets them. E4B on 4×L4: weights 3.3 GiB
+per GPU, KV cache 298,464 tokens (45× concurrency at 32K), server ready ~5 min after launch.
+
+## 15. `agent_tool` in the harness loop, and `read_file`'s character cap (2026-10-25)
+
+- **`skip_summarization` must be `false` for the localizer.** ADK 1.39.1 `Event.is_final_response()`
+  returns true when `actions.skip_summarization` is set, and `BaseLlmFlow.run_async` stops at a
+  final response. With `true`, the fixer's `runner.run_async` ends right after the localizer's
+  answer; the harness loop (`agent_runner.py:788-1023`) sees no submitted patch and sends the nudge
+  "Please continue your work using the available tools, or call submit_patch ..." as a new user
+  message, which also erases the fixer's earlier thoughts from the prompt (§9 item 1). With `false`
+  the fixer is called again with the tool result, as for any tool. `agents/locfix/agent.yaml` uses
+  `false`; `tests/test_loc_fix_records.py` checks that a fixer record has exactly one user message.
+- Tool result as the fixer sees it: `{"result": "{\"locations\": [...]}"}` (the sub-agent's final
+  non-thought text, JSON-escaped inside ADK's `result` wrapper).
+- Routing in the scripted replay: requests carry `Your internal name is "<name>"` in the system
+  message, so `locfix.harness.replay` serves one script per agent.
+- **`read_file` character cap:** when the selected lines exceed `max_file_chars` (10,000), the
+  harness cuts `content` at 10,000 characters, possibly in the middle of a line, sets
+  `is_truncated: true` and still reports the line-capped `end_line` (`swegemma/tools/workspace.py`,
+  `read_file`). `end_line` is therefore not "the last complete line shown". Synthetic reads
+  (`locfix.data.render_obs.chunk_range`) are sized so that every output is complete.
+
+**2026-10-26:** golden check re-run with `locfix_fixtures.jsonl` added (localizer system prompt, `agent_tool` call and `{"result": ...}` response, synthetic reads): 141/141 prompts identical, `ok: true`.

@@ -5,14 +5,14 @@ For every trained assistant turn i of every record, asks vLLM's
 tools and chat_template_kwargs) and compares them with `locfix.render.chat` on the same input.
 They must be identical; the training sequence must also start with that prompt.
 
-Run where vLLM 0.19.1 is installed (Colab or Kaggle), from a clone of the repo:
+Run on Kaggle (competition vLLM 0.19.1 + the Gemma 4 model attached; no install needed): upload
+the repo (e.g. locfix_code.zip) as a Kaggle Dataset, add it and the model as notebook inputs, then
 
-    pip install -e . && pip install vllm==0.19.1 transformers==5.13.1
-    python notebooks/golden_render_check.py --model google/gemma-4-E4B-it-qat-w4a16-ct \
-        --records tests/fixtures/records/s1_fixtures.jsonl
+    !python /kaggle/input/<dataset>/locfix/notebooks/golden_render_check.py \
+        --model /kaggle/input/models/google/gemma-4/other/gemma-4-e4b-it-qat-w4a16-ct/2
 
-or from a cell: `from golden_render_check import check; check("<model>", "<records.jsonl>")`.
-Writes golden_render_report.json.
+The script adds the repo's src/ to sys.path itself and uses the fixture records by default.
+Writes golden_render_report.json (and vllm_golden.log) to /kaggle/working or the current folder.
 """
 from __future__ import annotations
 
@@ -27,6 +27,11 @@ import urllib.request
 from pathlib import Path
 
 PORT = 8012
+REPO = Path(__file__).resolve().parents[1]
+# run from an uploaded copy of the repo without installing it (Kaggle notebooks are offline)
+if (REPO / "src" / "locfix").is_dir() and str(REPO / "src") not in sys.path:
+    sys.path.insert(0, str(REPO / "src"))
+DEFAULT_RECORDS = ",".join(str(REPO / "tests" / "fixtures" / "records" / n) for n in ("s1_fixtures.jsonl", "locfix_fixtures.jsonl"))
 
 
 def _post(path: str, body: dict) -> dict:
@@ -49,13 +54,18 @@ def _wait(proc: subprocess.Popen, timeout: int) -> bool:
     return False
 
 
-def check(model: str, records: str, tp: int = 0, timeout: int = 1500, limit: int = 0) -> dict:
+def load_records(records: str | Path) -> list[dict]:
+    """Records from one JSONL file or a comma-separated list of files."""
+    return [json.loads(line) for p in str(records).split(",") for line in open(p.strip())]
+
+
+def check(model: str, records: str | Path = DEFAULT_RECORDS, tp: int = 0, timeout: int = 1500, limit: int = 0) -> dict:
     import torch
 
     from locfix.render.chat import load_tokenizer, render_record, render_text
 
     tok = load_tokenizer(model)
-    recs = [json.loads(line) for line in open(records)]
+    recs = load_records(records)
     if limit:
         recs = recs[:limit]
     cmd = [sys.executable, "-m", "vllm.entrypoints.openai.api_server", "--model", model,
@@ -64,7 +74,8 @@ def check(model: str, records: str, tp: int = 0, timeout: int = 1500, limit: int
            "--max-model-len", "32768", "--enable-auto-tool-choice",
            "--tool-call-parser", "gemma4", "--reasoning-parser", "gemma4"]
     report: dict = {"model": model, "records": records, "checked": 0, "mismatches": [], "errors": []}
-    log = open("vllm_golden.log", "w")
+    out_dir = Path("/kaggle/working") if Path("/kaggle/working").is_dir() else Path(".")
+    log = open(out_dir / "vllm_golden.log", "w")
     proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     try:
         if not _wait(proc, timeout):
@@ -86,7 +97,7 @@ def check(model: str, records: str, tp: int = 0, timeout: int = 1500, limit: int
                            add_special_tokens=False)["input_ids"]
                 report["checked"] += 1
                 if ours != theirs:
-                    k = next((j for j, (a, b) in enumerate(zip(ours, theirs)) if a != b), min(len(ours), len(theirs)))
+                    k = next((j for j, (a, b) in enumerate(zip(ours, theirs, strict=False)) if a != b), min(len(ours), len(theirs)))
                     report["mismatches"].append({
                         "record": r["id"], "message": i, "ours_len": len(ours), "theirs_len": len(theirs),
                         "first_diff": k,
@@ -102,7 +113,7 @@ def check(model: str, records: str, tp: int = 0, timeout: int = 1500, limit: int
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
     report["ok"] = report["checked"] > 0 and not report["mismatches"] and not report["errors"]
-    Path("golden_render_report.json").write_text(json.dumps(report, indent=2))
+    (out_dir / "golden_render_report.json").write_text(json.dumps(report, indent=2))
     print(json.dumps({k: v for k, v in report.items() if k != "mismatches"}, indent=2))
     for m in report["mismatches"][:5]:
         print(json.dumps(m, indent=2))
@@ -112,7 +123,7 @@ def check(model: str, records: str, tp: int = 0, timeout: int = 1500, limit: int
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--model", required=False)
-    p.add_argument("--records", default="tests/fixtures/records/s1_fixtures.jsonl")
+    p.add_argument("--records", default=str(DEFAULT_RECORDS), help="JSONL file(s), comma-separated")
     p.add_argument("--tp", type=int, default=0)
     p.add_argument("--limit", type=int, default=0)
     a, _ = p.parse_known_args(argv)
