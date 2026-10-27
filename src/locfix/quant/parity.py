@@ -113,13 +113,18 @@ def hf_side(bf16_dir: str, adapter_dir: str | None, items_path: str, out_path: s
     Path(out_path).write_text(json.dumps(out))
 
 
-def vllm_side(ct_dir: str, adapter_dir: str | None, items_path: str, out_path: str, max_lora_rank: int,
-              gpu_memory_utilization: float = 0.85) -> None:
+# prompt_logprobs takes a float32 log-softmax over the 262K vocabulary for every scheduled prompt
+# token: 16,384 tokens (vLLM's default chunk) need ~17 GB on top of the KV cache. Parity needs little
+# KV cache, so: half the GPU, one prompt at a time, 4,096-token prefill chunks (~4 GB of logits).
+VLLM_PARITY_KW = {"gpu_memory_utilization": 0.5, "max_num_seqs": 1, "max_num_batched_tokens": 4096,
+                  "enable_chunked_prefill": True, "enable_prefix_caching": False}
+
+
+def vllm_side(ct_dir: str, adapter_dir: str | None, items_path: str, out_path: str, max_lora_rank: int) -> None:
     from vllm import LLM, SamplingParams
     from vllm.inputs import TokensPrompt
 
-    kw: dict[str, Any] = {"model": ct_dir, "max_model_len": 32768, "gpu_memory_utilization": gpu_memory_utilization,
-                          "enforce_eager": True}
+    kw: dict[str, Any] = {"model": ct_dir, "max_model_len": 32768, "enforce_eager": True, **VLLM_PARITY_KW}
     if adapter_dir:
         kw.update(enable_lora=True, max_lora_rank=max_lora_rank, max_loras=1)
     llm = LLM(**kw)
@@ -154,7 +159,7 @@ def compare(a: dict[str, list[float]], b: dict[str, list[float]]) -> dict[str, A
 
 def _run_side(side: str, args: list[str]) -> None:
     cmd = [sys.executable, "-m", "locfix.quant.parity", "--side", side, *args]
-    env = dict(os.environ, VLLM_WORKER_MULTIPROC_METHOD="spawn")
+    env = dict(os.environ, VLLM_WORKER_MULTIPROC_METHOD="spawn", PYTORCH_ALLOC_CONF="expandable_segments:True")
     subprocess.run(cmd, check=True, env=env)
 
 

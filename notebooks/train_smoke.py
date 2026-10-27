@@ -65,7 +65,7 @@ for line in open({str(record_file)!r}):
     items.append((r.input_ids[:s], r.input_ids[s:min(e, s + {max_new})]))
 r = json.load(open({str(Path(adapter) / 'adapter_config.json')!r}))["r"]
 llm = LLM(model={ct!r}, max_model_len=32768, enable_lora=True, max_lora_rank=r, max_loras=1,
-          gpu_memory_utilization=0.85, enforce_eager=True)
+          gpu_memory_utilization=0.5, max_num_seqs=1, enforce_eager=True)
 outs = llm.generate([TokensPrompt(prompt_token_ids=p) for p, _ in items],
                     SamplingParams(max_tokens={max_new}, temperature=0.0, skip_special_tokens=False),
                     lora_request=LoRARequest("a", 1, {adapter!r}))
