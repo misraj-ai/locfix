@@ -249,7 +249,7 @@ else:
     from locfix.data.agent_records import BuildConfig, build_agent_records
     from locfix.data.dataset import SolvedData
     from locfix.data.loc_fix_records import LocFixConfig, TaskSkip, build_task_records
-    from locfix.harness.budget import BudgetExceeded
+    from locfix.harness.budget import BudgetExceeded, time_scale_from_cfg
     from locfix.harness.prompts import Budget
 
     data = SolvedData(DATA_DIR, exclude_repos=cfg["data"]["exclude_repos"])
@@ -257,10 +257,11 @@ else:
           [str(d) for d in data.code_dirs if d.exists()] or "none (code rebuilt from traces)")
     b, bl = cfg["budget"], cfg["budget_locfix"]
     bc = BuildConfig(agent_dir="agents/single", model_alias=cfg["models"]["31b"]["serve_id"],
-                     budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]))
+                     budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]),
+                     time_scale=time_scale_from_cfg(cfg, "budget"))
     lc = LocFixConfig(agent_dir="agents/locfix", model_alias=cfg["models"]["31b"]["serve_id"],
                       budget=Budget(bl["max_time_minutes"], bl["max_tool_calls"], bl["max_turns"]),
-                      em=cfg["em"], seed=cfg["seed"])
+                      em=cfg["em"], seed=cfg["seed"], time_scale=time_scale_from_cfg(cfg, "budget_locfix"))
     paths = data.trace_paths()
     if INSTANCE:
         paths = [p for p in paths if p.name.startswith(INSTANCE)]

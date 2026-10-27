@@ -236,6 +236,7 @@ def add_args_cmd_agent_records(p: argparse.ArgumentParser) -> None:
 
 
 def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
+    from ..harness.budget import time_scale_from_cfg
     from ..runmeta import write_run_meta
 
     b = cfg["budget"]
@@ -244,6 +245,7 @@ def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
         budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]),
         compaction=cfg["harness"]["compaction"] if cfg["data"].get("replay_compaction") else None,
         layout="segments" if cfg["data"].get("training_layout", "auto") in ("auto", "one_sequence") else "per_turn",
+        time_scale=time_scale_from_cfg(cfg, "budget"),
     )
     rows: dict[str, dict] = {}
     if args.solved:
@@ -265,6 +267,10 @@ def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
                 repo = parse_task_prompt(tr.task_prompt).repo.lower()
                 if any(repo.split("/")[-1] == x for x in exclude):
                     counts["skip_dev_repo"] = counts.get("skip_dev_repo", 0) + 1
+                    continue
+                if rows and tr.instance_id not in rows:
+                    # e.g. the trajectories removed by the cleaning's patch audit: not in solved.jsonl
+                    counts["skip_not_in_solved"] = counts.get("skip_not_in_solved", 0) + 1
                     continue
                 row = rows.get(tr.instance_id, {})
                 source = {"set": "solved", "dataset": row.get("verifier", "other"),

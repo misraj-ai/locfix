@@ -251,7 +251,7 @@ compaction path exists and is tested but needs a summarizer (spec 03).
 | `skip:missing_code` | 2b | no code for an edited file (no code file, and the teacher never printed it in a usable form) |
 | `skip:empty_l_edit` | 2b | the patch touches nothing that maps to a code location |
 | `skip:no_code_file` | 2b | no code file and `--no-code-fallback` |
-| `drop:<variant>:localizer_over_calls` | 2b | exploration longer than `em.localizer_max_calls` (12) |
+| `drop:<variant>:localizer_over_calls` | 2b | exploration longer than `em.localizer_max_calls` (15) |
 | `drop:<variant>:impossible_input` | 2b | z misses an edited location and nothing recovers it |
 | `drop:<variant>:unseen_code` | 2b | code rebuilt from the trace and a read needs lines the teacher never printed |
 
@@ -262,13 +262,14 @@ or `--set`. They must match the submission's `agents/*/eval_config.yaml`.
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `budget.max_time_minutes`, `budget.max_tool_calls`, `budget.max_turns` | 5, 30, 300 | single-agent budget (prompt, warnings, `get_status`, over-budget drops) |
-| `budget_locfix.*` | 5, 40, 300 | the same for the two-agent records |
+| `budget.max_time_minutes`, `budget.max_tool_calls`, `budget.max_turns` | 5, 40, 300 | single-agent budget (prompt, warnings, `get_status`, over-budget drops) |
+| `budget_locfix.*` | 5, 48, 300 | the same for the two-agent records (+8 calls: the fixer re-reads the localizer's locations) |
+| `data.teacher_time_minutes`, `data.time_scale` | 8, auto | clock shown by `get_status`: teacher's elapsed time × scale; `auto` = budget minutes / teacher minutes (0.625), so the teacher's used share of its time is kept |
 | `data.exclude_repos` | fastapi, requests, rich, httpx | repositories of the dev set |
 | `data.training_layout` | auto | `auto`/`one_sequence`: one record per segment; `per_turn`: one record per model call |
 | `data.replay_compaction` | false | replay with the harness's context compaction |
 | `em.max_locations`, `em.ctx_budget_tokens` | 8, 6000 | size of z |
-| `em.localizer_max_calls` | 12 | longest localizer exploration kept |
+| `em.localizer_max_calls` | 15 | longest localizer exploration kept |
 | `em.no_request_fraction` | 0.4 | share of noisy fixer records without requests |
 | `seed` | 1234 | variant choices (per task: `seed:instance_id`) |
 

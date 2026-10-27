@@ -101,6 +101,26 @@ class BudgetWalker:
         return recorded
 
 
+def time_scale_from_cfg(cfg: dict, budget_key: str = "budget") -> float:
+    """Factor from the teacher's clock to the clock shown in `get_status` (`data.time_scale`).
+
+    `auto` keeps the share of its time limit the teacher had used: budget minutes /
+    `data.teacher_time_minutes` (8-minute teacher, 5-minute budget -> 0.625). A number is used as
+    given (e.g. projected Gemma time / teacher time once timing runs exist)."""
+    d = cfg.get("data", {})
+    val = d.get("time_scale", "auto")
+    if val in (None, "auto"):
+        teacher = d.get("teacher_time_minutes")
+        minutes = cfg[budget_key].get("max_time_minutes")
+        if not teacher or not minutes:
+            return 1.0
+        return float(minutes) / float(teacher)
+    val = float(val)
+    if val <= 0:
+        raise ValueError(f"data.time_scale must be > 0, got {val}")
+    return val
+
+
 class BudgetExceeded(RuntimeError):
     pass
 

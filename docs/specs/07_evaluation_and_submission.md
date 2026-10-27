@@ -41,7 +41,7 @@ The hidden set (~120 tasks) runs **sequentially** within 12 hours, including san
 still graded. The only "wrap up" signal is `budget_warning`, added when ≤ 10 counted calls remain
 (and the limit is ≥ 20).
 
-Defaults (`configs/defaults.yaml`): `max_time_minutes: 5`, `max_tool_calls: 30`, turns unchanged.
+Defaults (`configs/defaults.yaml`): `max_time_minutes: 5`, `max_tool_calls: 40` (two-agent: 48), turns unchanged. The 5-minute cut usually ends long runs before the call budget; the harness then grades the git diff (harness_facts §7).
 
 `locfix eval timing` on a Kaggle L4×4 notebook (internet off, competition data attached):
 - measure vLLM startup time, per-task sandbox setup time, prefill and decode tokens/s for each

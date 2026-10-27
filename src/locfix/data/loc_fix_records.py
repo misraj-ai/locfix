@@ -410,7 +410,7 @@ def build_scripts(task: Task, tl: TaskLocations, v: Variant, budget: Budget, em_
     walker = BudgetWalker(max_tool_calls=budget.tool_calls, time_minutes=budget.time_minutes,
                           turns=budget.turns)
     loc_steps, loc_meta = localizer_session(tl, task.trace, v.z, walker,
-                                            em_cfg.get("localizer_max_calls", 12), time_scale)
+                                            em_cfg.get("localizer_max_calls", 15), time_scale)
     with ObsRenderer(task.files, task.known_lines) as r:
         fix_steps, fix_meta = fixer_script(task, tl, v.z, v.requests, walker, r, time_scale)
     meta = {**loc_meta, **fix_meta, "counted_calls": walker.used}
@@ -508,6 +508,7 @@ def add_args_cmd_locfix_records(p: argparse.ArgumentParser) -> None:
 
 
 def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
+    from ..harness.budget import time_scale_from_cfg
     from ..runmeta import write_run_meta
     from .dataset import SolvedData
 
@@ -517,7 +518,7 @@ def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
         budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]),
         compaction=cfg["harness"]["compaction"] if cfg["data"].get("replay_compaction") else None,
         layout="segments" if cfg["data"].get("training_layout", "auto") in ("auto", "one_sequence") else "per_turn",
-        em=cfg["em"], seed=cfg["seed"],
+        em=cfg["em"], seed=cfg["seed"], time_scale=time_scale_from_cfg(cfg, "budget_locfix"),
     )
     data = SolvedData(traces=args.traces, solved=args.solved, code_dirs=args.code,
                       exclude_repos=cfg["data"].get("exclude_repos", []))
