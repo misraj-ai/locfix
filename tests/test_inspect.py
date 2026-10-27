@@ -47,3 +47,44 @@ def test_check_records_cli(capsys):
     out = capsys.readouterr().out
     report = json.loads(out[out.index("{"):])
     assert report["s1_fixtures.jsonl"]["errors"] == 0 and report["locfix_fixtures.jsonl"]["rendered"] == 2
+
+
+def test_data_stats_cli(tmp_path, capsys):
+    tok_dir = ROOT / "work" / "model_meta" / "e4b"
+    if not (tok_dir / "tokenizer.json").exists():
+        pytest.skip("tokenizer not available")
+    from locfix.cli import main
+
+    assert main(["data.stats", "--traces", str(ROOT / "tests/fixtures/traces"), "--records", str(RECORDS),
+                 "--tokenizer", str(tok_dir), "--out", str(tmp_path), "--world-size", "2",
+                 "--global-batch", "4", "--tokens-per-s", "2000"]) == 0
+    js = json.loads((tmp_path / "stats.json").read_text())
+    sweep = {r["max_tool_calls"]: r["traces kept"] for r in js["traces"]["budget_sweep"]}
+    assert sweep[24] == 3 and sweep[30] == 4                  # exceptiongroup needs 28 calls
+    dist = js["traces"]["distributions"]
+    assert 8000 < dist["approx_tokens"]["min"] < 9000          # astropy, rendered 8,381
+    stages = {r["stage"]: r for r in js["records"]["stages"]}
+    assert stages["s1_agent"]["records"] == 4 and stages["s2_fix_noisy"]["with requests"] == 4
+    sim = js["records"]["step_simulation"]
+    rnd = next(r for r in sim if r["records"] == "all" and r["mode"] == "random" and r["max_seq_len"] == "32K")
+    grp = next(r for r in sim if r["records"] == "all" and r["mode"] == "grouped" and r["max_seq_len"] == "32K")
+    assert grp["gpu_efficiency %"] >= rnd["gpu_efficiency %"] and "epoch hours" in rnd
+    rows = [json.loads(x) for x in (tmp_path / "records.jsonl").read_text().splitlines()]
+    assert all(0.95 < sum(r["categories"].values()) / r["tokens"] < 1.05 for r in rows)   # breakdown ±2%
+
+
+def test_length_grouping_plan():
+    import numpy as np
+
+    from locfix.train.data import Example, Source, make_plan
+
+    lens = [100, 9000, 120, 8800, 150, 9500, 90, 9100]
+    exs = [Example(np.zeros(n, dtype=np.int32), np.zeros(n, dtype=np.int32), np.ones(n, dtype=np.float32),
+                   f"r{i}", f"t{i}", "s") for i, n in enumerate(lens)]
+    plan = make_plan(exs, [Source("x")], 1, rows_per_step=4, max_tokens=10000, packing=False, seed=0,
+                     length_grouping=True)
+    steps = [plan.rows[i:i + 4] for i in range(0, 8, 4)]
+    for st in steps:                                             # each step all short or all long
+        sizes = [lens[r[0]] for r in st]
+        assert max(sizes) < 200 or min(sizes) > 8000
+    assert sorted(i for r in plan.rows for i in r) == list(range(8))

@@ -133,6 +133,7 @@ tokens; `repeat` 2 uses every record twice per epoch, 0.5 a different random hal
 | `optimizer` | AdamW (0.9, 0.999), wd 0, clip 1.0 | |
 | `max_seq_len` | 32768 | longer records are dropped and counted |
 | `packing` | false | true: several records per row (first-fit), `position_ids` restart per record |
+| `length_grouping` | false | true: rows of similar length in the same optimizer step, so GPUs wait less for the longest row (`locfix data.stats` simulates the gain) |
 | `attn_implementation` | sdpa | packing with sdpa is tested (packed row = separate records, exactly) |
 | `ce_chunk` | 1024 | trained tokens per vocabulary-projection chunk |
 | `cache_dir` | `${paths.records}/token_cache` | tokenized records, reused across runs |

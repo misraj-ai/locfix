@@ -79,17 +79,29 @@ versions, counts) next to its output.
 
 ## 3. Step by step
 
-### Step 1 (optional): trace statistics
+### Step 1: statistics (choose the budget, the maximum length and the batching)
 
 ```bash
-locfix data.traces-stats codeagent_final/cleaned/traces --out work/stats/traces.jsonl
+# traces only: fast, no harness wheels (token counts approximate, within ~1.5%)
+locfix data.stats --traces codeagent_final/cleaned_v2/traces --solved codeagent_final/cleaned_v2/solved.jsonl \
+    --tokenizer <tokenizer dir> --out work/stats/traces
+
+# records: exact token counts, per stage, and the multi-GPU step-time simulation
+locfix data.stats --records work/records/s1_agent.jsonl work/records/locfix --tokenizer <tokenizer dir> \
+    --out work/stats/records --world-size 8 --global-batch 16 [--tokens-per-s <measured>]
 ```
 
 | | |
 | --- | --- |
-| Input | a folder of traces |
-| Output | summary on stdout (traces, counted tool calls median / p90 / max, traces with parallel calls, nudges, compaction); with `--out`, one JSON row per trace: `trace`, `instance_id`, `turns`, `counted_calls`, `parallel_turns`, `nudges`, `calls_before_first_edit`, `first_edit_tool`, `duration_s`, `tools`, `cleaned_turns` |
-| Use | choosing the budget: trajectories with more `counted_calls` than `budget.max_tool_calls` will be dropped in step 2 |
+| Input | traces (+ `solved.jsonl` for the dataset of each trace) and/or record files; the Gemma 4 tokenizer |
+| Output | `stats.md` (the report), `stats.json`, one row per trace / record (`traces.jsonl`, `records.jsonl`), histograms (PNG, if matplotlib is installed) |
+| Traces part | distributions (counted tool calls, turns, exploration before the first edit, nudges, parallel calls, teacher time, approximate tokens, largest tool output, thinking tokens), per dataset; **tool-call budget sweep** (traces kept at 16…100 calls), **exploration sweep** (`em.localizer_max_calls`), **length sweep**, budget × length grid |
+| Records part | per stage: records, tasks, token percentiles, trained share, requests; **length sweep per stage** (records and trained tokens kept at 8K…32K); where the tokens go (system, task, tool outputs, thinking, calls); largest tool output / trained turn; **step-time simulation**: GPU efficiency with one record per row in random order, with `train.length_grouping`, and with `train.packing` |
+
+Records carry the budget they were built with. To see every trajectory regardless of the budget,
+build them once with a large budget (`--set budget.max_tool_calls=100 --set
+budget_locfix.max_tool_calls=100`), read the statistics, then rebuild with the chosen budget.
+(`locfix data.traces-stats` is the older, smaller summary.)
 
 ### Step 2a: single-agent records (Stage 1)
 

@@ -236,3 +236,5 @@ per GPU, KV cache 298,464 tokens (45× concurrency at 32K), server ready ~5 min 
   `pip install --no-deps --force-reinstall <wheelhouse>/vllm-*.whl`.
   `locfix.quant.parity.vllm_lora_support()` reports which build is installed; parity refuses the
   public build unless `--vllm-text-only` (serving through `Gemma4ForCausalLM`, approximate) is given.
+- Confirmed 2026-10-27: with the wheelhouse vLLM installed on Colab (Python 3.13), LoRA on
+  `Gemma4ForConditionalGeneration` works and parity passes (spec 01 status).

@@ -205,8 +205,24 @@ class TrainPlan:
         return [min(r // self.rows_per_step, self.steps) for r in self.epoch_end_rows]
 
 
+def group_by_length(rows: list[list[int]], lengths: list[int], rows_per_step: int, seed: int) -> list[list[int]]:
+    """Put rows of similar token counts in the same optimizer step (steps in random order).
+
+    With P processes, a micro-step lasts as long as its longest row; grouping keeps the rows of a
+    step close in length (see `locfix data.stats`, step simulation). Consecutive rows go to
+    consecutive processes, so after sorting each micro-step's rows are neighbours in length."""
+    size = lambda r: sum(lengths[i] for i in r)  # noqa: E731
+    ordered = sorted(rows, key=size)
+    steps = [ordered[i:i + rows_per_step] for i in range(0, len(ordered), rows_per_step)]
+    rng = random.Random(seed)
+    for s in steps:
+        rng.shuffle(s)           # which process gets which row inside a step does not matter
+    rng.shuffle(steps)
+    return [r for s in steps for r in s]
+
+
 def make_plan(examples: list[Example], sources: list[Source], epochs: int, rows_per_step: int,
-              max_tokens: int, packing: bool, seed: int) -> TrainPlan:
+              max_tokens: int, packing: bool, seed: int, length_grouping: bool = False) -> TrainPlan:
     """Rows for every epoch. Each epoch's rows are trimmed to a multiple of `rows_per_step`
     (world size × gradient accumulation × rows per device) so that an epoch ends on an optimizer
     step and every process gets the same number of rows."""
@@ -219,7 +235,10 @@ def make_plan(examples: list[Example], sources: list[Source], epochs: int, rows_
         ep_rows = pack_rows(idx, lengths, max_tokens, packing, seed=seed * 1000 + ep)
         keep = len(ep_rows) - len(ep_rows) % rows_per_step
         dropped += len(ep_rows) - keep
-        rows.extend(ep_rows[:keep])
+        ep_rows = ep_rows[:keep]
+        if length_grouping:
+            ep_rows = group_by_length(ep_rows, lengths, rows_per_step, seed * 7919 + ep)
+        rows.extend(ep_rows)
         ends.append(len(rows))
     return TrainPlan(rows, ends, dropped, rows_per_step)
 

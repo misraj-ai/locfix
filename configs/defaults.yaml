@@ -97,6 +97,7 @@ train:                         # `locfix train` (src/locfix/train/sft.py); a run
   per_device_batch: 1          # rows per forward (rows are packed or single records; no padding)
   gradient_checkpointing: true
   packing: false               # true: several short records per row (first-fit, ≤ max_seq_len tokens)
+  length_grouping: false       # true: rows of similar length in the same step (less waiting across GPUs)
   attn_implementation: sdpa    # sdpa (tested, packing-safe) | flex_attention | flash_attention_2
   ce_chunk: 1024               # trained tokens per chunk of the vocabulary projection
   bf16: true

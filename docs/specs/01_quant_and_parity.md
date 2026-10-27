@@ -95,3 +95,13 @@ and `locfix quant.parity` (HF and vLLM sides in separate processes; modes base /
 trained adapter) are implemented and CPU-tested on tiny checkpoints built with compressed-tensors
 itself. Pending: the first GPU run on E4B and 31B (`notebooks/train_smoke.py`), which also sets the
 parity threshold.
+
+**First GPU results (Colab, E4B, competition vLLM wheel, 2026-10-27, `smoke_report.json`):**
+- Dequantize: 343 int4 layers, grid max deviation 0.027 (≤ 0.031 bf16 bound), towers dropped.
+- Mode 1 (base): mean |Δ logp| **0.024** nats on 4,557 trained tokens, max 0.64, 7.7% of tokens > 0.1
+  (Marlin int4 GEMM + Triton attention vs bf16 HF; kernel noise).
+- Mode 2 (random r64 adapter): effect 5.54 (HF) vs 5.54 (vLLM) nats; HF−vLLM 0.21 (4% of the
+  effect): vLLM applies every module.
+- Mode 3 (trained r16 adapter): HF−vLLM **0.030**, effect 2.03 on both sides; vLLM generation with the
+  adapter reproduces 8/8 trained turns token for token (first 48 tokens).
+- Proposed threshold for later adapters: mean |Δ| ≤ 0.05 and effect equal on both sides within 5%.

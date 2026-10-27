@@ -18,6 +18,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "data.traces-stats": ("locfix.data.traces:cmd_stats", "statistics over a folder of traces"),
     "data.agent-records": ("locfix.data.agent_records:cmd_agent_records",
                            "Stage 1 records: replay teacher traces through the agent stack"),
+    "data.stats": ("locfix.data.stats:cmd_stats",
+                   "statistics of traces and records: budget, length, batching (writes stats.md)"),
     "data.check-records": ("locfix.render.inspect:cmd_check_records",
                            "validate record files and tokenize them (no harness needed)"),
     "quant.dequantize": ("locfix.quant.dequantize:cmd_dequantize",

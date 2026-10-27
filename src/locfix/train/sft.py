@@ -44,6 +44,7 @@ class TrainSettings:
     per_device_rows: int = 1
     max_seq_len: int = 32768
     packing: bool = False
+    length_grouping: bool = False
     attn_implementation: str = "sdpa"
     gradient_checkpointing: bool = True
     ce_chunk: int = 1024
@@ -80,6 +81,7 @@ class TrainSettings:
             lora_dropout=float(t["lora"].get("dropout", 0.0)), init_adapter=t.get("init_adapter"),
             global_batch_rows=int(t["global_batch_sequences"]), per_device_rows=int(t.get("per_device_batch", 1)),
             max_seq_len=int(t["max_seq_len"]), packing=bool(t.get("packing", False)),
+            length_grouping=bool(t.get("length_grouping", False)),
             attn_implementation=t.get("attn_implementation", "sdpa"),
             gradient_checkpointing=bool(t.get("gradient_checkpointing", True)), ce_chunk=int(t.get("ce_chunk", 1024)),
             warmup_steps=int(t["schedule"]["warmup_steps"]), min_lr_ratio=float(t["schedule"]["min_lr_ratio"]),
@@ -240,7 +242,7 @@ def build_data(s: TrainSettings, tok, ws: int, main_first) -> tuple:
             if s.val_sources else ([], [])
     ga = s.grad_accum(ws)
     plan = make_plan(examples, s.sources, s.epochs, ws * ga * s.per_device_rows, s.max_seq_len,
-                     s.packing, s.seed)
+                     s.packing, s.seed, s.length_grouping)
     if plan.steps == 0:
         raise ValueError(f"no optimizer step: {len(examples)} examples, {ws * ga} rows per step")
     return examples, reports, val_examples, val_reports, plan, ga
