@@ -44,7 +44,8 @@ def overfit_records(out: Path, n: int = 8, max_tokens: int = 12000) -> Path:
     return out
 
 
-def generation_check(ct: str, adapter: str, record_file: Path, tok_dir: str, max_new: int = 48) -> dict:
+def generation_check(ct: str, adapter: str, record_file: Path, tok_dir: str, text_only: bool = False,
+                     max_new: int = 48) -> dict:
     """Greedy generation from the prompt of each record's first trained turn; share of the trained
     target tokens reproduced (an overfit adapter should reproduce most of them)."""
     code = f"""
@@ -64,8 +65,9 @@ for line in open({str(record_file)!r}):
         e += 1
     items.append((r.input_ids[:s], r.input_ids[s:min(e, s + {max_new})]))
 r = json.load(open({str(Path(adapter) / 'adapter_config.json')!r}))["r"]
+extra = {{"hf_overrides": {{"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}}}} if {text_only!r} else {{}}
 llm = LLM(model={ct!r}, max_model_len=32768, enable_lora=True, max_lora_rank=r, max_loras=1,
-          gpu_memory_utilization=0.5, max_num_seqs=1, enforce_eager=True)
+          gpu_memory_utilization=0.5, max_num_seqs=1, enforce_eager=True, **extra)
 outs = llm.generate([TokensPrompt(prompt_token_ids=p) for p, _ in items],
                     SamplingParams(max_tokens={max_new}, temperature=0.0, skip_special_tokens=False),
                     lora_request=LoRARequest("a", 1, {adapter!r}))
@@ -94,6 +96,8 @@ def main(argv: list[str] | None = None) -> None:
     src.add_argument("--kaggle", help="kagglehub model handle to download")
     ap.add_argument("--work", default="/content/smoke" if Path("/content").exists() else "work/smoke")
     ap.add_argument("--skip-parity", action="store_true", help="no vLLM (train/export only)")
+    ap.add_argument("--vllm-text-only", action="store_true",
+                    help="vLLM through Gemma4ForCausalLM (approximate; when the competition vLLM wheel is unavailable)")
     ap.add_argument("--steps-epochs", type=int, default=12, help="epochs of the overfit run")
     a, _ = ap.parse_known_args(argv)
     if not (a.ct or a.kaggle):
@@ -109,6 +113,18 @@ def main(argv: list[str] | None = None) -> None:
         step("download")
         ct = kagglehub.model_download(a.kaggle)
     report["ct"] = ct
+    if not a.skip_parity:
+        from locfix.quant.parity import vllm_lora_support
+
+        sup = vllm_lora_support()
+        report["vllm_lora_support"] = sup
+        print("vLLM LoRA support:", sup, flush=True)
+        if not sup["Gemma4ForConditionalGeneration"] and not a.vllm_text_only:
+            raise SystemExit(
+                "This vLLM build cannot serve LoRA on Gemma4ForConditionalGeneration (the class the harness loads):\n"
+                "it is the public PyPI vllm 0.19.1. Install the competition's wheel on top, then rerun:\n"
+                "  pip install --no-deps --force-reinstall /path/to/gemma-4-developer-agent-wheelhouse/vllm-*.whl\n"
+                "or rerun with --vllm-text-only for an approximate check (or --skip-parity).")
 
     from locfix.quant.dequantize import dequantize
     from locfix.quant.parity import run_parity
@@ -124,9 +140,11 @@ def main(argv: list[str] | None = None) -> None:
     recs = [str(REPO / "tests" / "fixtures" / "records" / f) for f in ("s1_fixtures.jsonl", "locfix_fixtures.jsonl")]
     if not a.skip_parity:
         step("parity: base only (mode 1)")
-        report["parity_base"] = run_parity(str(bf16), ct, recs, str(work / "parity_base"), n=8)["base"]
+        report["parity_base"] = run_parity(str(bf16), ct, recs, str(work / "parity_base"), n=8,
+                                           vllm_text_only=a.vllm_text_only)["base"]
         step("parity: random adapter (mode 2)")
-        rp = run_parity(str(bf16), ct, recs, str(work / "parity_random"), random_rank=64, n=8)
+        rp = run_parity(str(bf16), ct, recs, str(work / "parity_random"), random_rank=64, n=8,
+                        vllm_text_only=a.vllm_text_only)
         report["parity_random"] = {k: rp[k] for k in ("base", "adapter", "effect_hf", "effect_vllm")}
         report["parity_random"]["base"].pop("per_record", None)
 
@@ -144,10 +162,11 @@ def main(argv: list[str] | None = None) -> None:
 
     if not a.skip_parity:
         step("parity: trained adapter (mode 3)")
-        rp = run_parity(str(bf16), ct, recs, str(work / "parity_trained"), adapter=adapter, n=8)
+        rp = run_parity(str(bf16), ct, recs, str(work / "parity_trained"), adapter=adapter, n=8,
+                        vllm_text_only=a.vllm_text_only)
         report["parity_trained"] = {k: rp[k] for k in ("adapter", "effect_hf", "effect_vllm")}
         step("generation with the adapter in vLLM")
-        report["generation"] = generation_check(ct, adapter, train_file, str(bf16))
+        report["generation"] = generation_check(ct, adapter, train_file, str(bf16), a.vllm_text_only)
     (work / "smoke_report.json").write_text(json.dumps(report, indent=2, default=str))
     print(json.dumps(report, indent=2, default=str)[:8000])
     print(f"\nreport: {work / 'smoke_report.json'}")

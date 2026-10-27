@@ -220,3 +220,19 @@ per GPU, KV cache 298,464 tokens (45× concurrency at 32K), server ready ~5 min 
   (`locfix.data.render_obs.chunk_range`) are sized so that every output is complete.
 
 **2026-10-26:** golden check re-run with `locfix_fixtures.jsonl` added (localizer system prompt, `agent_tool` call and `{"result": ...}` response, synthetic reads): 141/141 prompts identical, `ok: true`.
+
+## 16. The competition's vLLM is not the PyPI vLLM 0.19.1 (2026-10-27)
+
+- Public vLLM **v0.19.1** (PyPI; source tag `v0.19.1`, commit b1388b1): `Gemma4ForConditionalGeneration`
+  (`vllm/model_executor/models/gemma4_mm.py`) implements `SupportsMultiModal, SupportsPP,
+  SupportsEagle3`, **not `SupportsLoRA`**; only the text-only `Gemma4ForCausalLM` does. Starting it
+  with `--enable-lora` on the E4B `-ct` checkpoint fails: "Gemma4ForConditionalGeneration does not
+  support LoRA yet" (Colab, 2026-10-27).
+- The **Kaggle wheelhouse** vLLM (also reported as 0.19.1) served LoRA on that class in our Kaggle
+  check (§13: adapter applied on E4B and 31B, and the model manager logged the tower-LoRA message,
+  which is only reached after the LoRA support check).
+- Consequence: every vLLM run that must behave like the scorer (parity, evaluation, EM scoring)
+  must use the **competition wheel**: install PyPI `vllm==0.19.1` for its dependencies, then
+  `pip install --no-deps --force-reinstall <wheelhouse>/vllm-*.whl`.
+  `locfix.quant.parity.vllm_lora_support()` reports which build is installed; parity refuses the
+  public build unless `--vllm-text-only` (serving through `Gemma4ForCausalLM`, approximate) is given.

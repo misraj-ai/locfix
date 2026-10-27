@@ -109,3 +109,9 @@ Differences from the text above: packing is optional (`train.packing`, default o
 localizer records); the model is the text-only `Gemma4ForCausalLM` (the dequantizer writes a
 text-only checkpoint; adapter keys then match the layout verified on Kaggle); global batch is
 counted in rows (one record, or several packed records, per row).
+
+**First GPU run (Colab, single 94 GB GPU, 2026-10-27, `train_smoke.py --skip-parity`):** E4B
+dequantized and trained end to end: 24 optimizer steps (12 epochs over 8 short records, r 16),
+held-out NLL 1.107 → 0.0011 (overfit as intended), export with **258 LoRA modules**, the same
+count vLLM loaded in the Kaggle check (§13), 70 MB in bf16. Parity is pending the competition vLLM
+wheel (harness_facts §16).

@@ -120,12 +120,46 @@ VLLM_PARITY_KW = {"gpu_memory_utilization": 0.5, "max_num_seqs": 1, "max_num_bat
                   "enable_chunked_prefill": True, "enable_prefix_caching": False}
 
 
-def vllm_side(ct_dir: str, adapter_dir: str | None, items_path: str, out_path: str, max_lora_rank: int) -> None:
+TEXT_ONLY_OVERRIDE = {"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}
+
+
+class VllmBuildError(RuntimeError):
+    pass
+
+
+def vllm_lora_support() -> dict[str, Any]:
+    """Which Gemma 4 classes this vLLM build serves with LoRA.
+
+    The public vLLM 0.19.1 release declares LoRA only on the text-only `Gemma4ForCausalLM`; the
+    Kaggle competition's vLLM 0.19.1 (wheelhouse) also serves LoRA on the multimodal
+    `Gemma4ForConditionalGeneration`, the class the harness loads for E4B and 31B
+    (harness_facts §13, §16). Parity must run on the competition build."""
+    import importlib.metadata as md
+
+    from vllm.model_executor.models.gemma4 import Gemma4ForCausalLM
+    from vllm.model_executor.models.gemma4_mm import Gemma4ForConditionalGeneration
+    from vllm.model_executor.models.interfaces import supports_lora
+
+    return {"vllm": md.version("vllm"), "Gemma4ForConditionalGeneration": supports_lora(Gemma4ForConditionalGeneration),
+            "Gemma4ForCausalLM": supports_lora(Gemma4ForCausalLM)}
+
+
+def vllm_side(ct_dir: str, adapter_dir: str | None, items_path: str, out_path: str, max_lora_rank: int,
+              text_only: bool = False) -> None:
     from vllm import LLM, SamplingParams
     from vllm.inputs import TokensPrompt
 
     kw: dict[str, Any] = {"model": ct_dir, "max_model_len": 32768, "enforce_eager": True, **VLLM_PARITY_KW}
+    if text_only:
+        kw["hf_overrides"] = TEXT_ONLY_OVERRIDE
     if adapter_dir:
+        sup = vllm_lora_support()
+        if not text_only and not sup["Gemma4ForConditionalGeneration"]:
+            raise VllmBuildError(
+                f"this vLLM build ({sup['vllm']}) cannot serve LoRA on Gemma4ForConditionalGeneration, the class "
+                "the competition harness loads. It is the public PyPI release; install the competition's vLLM wheel "
+                "from the Kaggle wheelhouse (pip install --no-deps --force-reinstall <wheelhouse>/vllm-*.whl), or "
+                "pass --vllm-text-only for an approximate check through Gemma4ForCausalLM.")
         kw.update(enable_lora=True, max_lora_rank=max_lora_rank, max_loras=1)
     llm = LLM(**kw)
     lora = None
@@ -165,12 +199,15 @@ def _run_side(side: str, args: list[str]) -> None:
 
 def run_parity(bf16: str, ct: str, records: list[str], out: str, adapter: str | None = None,
                random_rank: int | None = None, n: int = 12, max_tokens: int = 32000,
-               threshold: float | None = None) -> dict[str, Any]:
+               threshold: float | None = None, vllm_text_only: bool = False) -> dict[str, Any]:
     o = Path(out)
     o.mkdir(parents=True, exist_ok=True)
     items = prepare_items(records, bf16, n, max_tokens)
     (o / "items.json").write_text(json.dumps(items))
-    report: dict[str, Any] = {"bf16": bf16, "ct": ct, "records": records, "n_items": len(items)}
+    report: dict[str, Any] = {"bf16": bf16, "ct": ct, "records": records, "n_items": len(items),
+                              "vllm_class": "Gemma4ForCausalLM (text-only override)" if vllm_text_only
+                              else "as in the checkpoint (harness)"}
+    extra = ["--text-only"] if vllm_text_only else []
     rank = None
     if random_rank:
         report["random_adapter"] = random_adapter(bf16, str(o / "random_adapter"), random_rank, 2 * random_rank)
@@ -178,11 +215,12 @@ def run_parity(bf16: str, ct: str, records: list[str], out: str, adapter: str | 
     if adapter:
         rank = int(json.loads((Path(adapter) / "adapter_config.json").read_text())["r"])
     for side in ("hf", "vllm"):
+        x = extra if side == "vllm" else []
         _run_side(side, ["--bf16", bf16, "--ct", ct, "--items", str(o / "items.json"),
-                         "--side-out", str(o / f"{side}_base.json")])
+                         "--side-out", str(o / f"{side}_base.json"), *x])
         if adapter:
             _run_side(side, ["--bf16", bf16, "--ct", ct, "--items", str(o / "items.json"), "--adapter", adapter,
-                             "--max-lora-rank", str(rank), "--side-out", str(o / f"{side}_adapter.json")])
+                             "--max-lora-rank", str(rank), "--side-out", str(o / f"{side}_adapter.json"), *x])
     load = lambda name: json.loads((o / name).read_text())  # noqa: E731
     report["base"] = compare(load("hf_base.json"), load("vllm_base.json"))
     if adapter:
@@ -213,11 +251,13 @@ def add_args_cmd_parity(p: argparse.ArgumentParser) -> None:
     g.add_argument("--random-adapter", type=int, metavar="RANK", help="random adapter of this rank (mode 2)")
     p.add_argument("--n", type=int, default=12, help="number of records")
     p.add_argument("--threshold", type=float, help="max mean |Δ logp| accepted (set from the first run)")
+    p.add_argument("--vllm-text-only", action="store_true",
+                   help="serve through Gemma4ForCausalLM (approximate; only if the competition vLLM wheel is unavailable)")
 
 
 def cmd_parity(args: argparse.Namespace, cfg: dict) -> int:
     rep = run_parity(args.bf16, args.ct, args.records, args.out, args.adapter, args.random_adapter, args.n,
-                     threshold=args.threshold)
+                     threshold=args.threshold, vllm_text_only=args.vllm_text_only)
     print(json.dumps({k: v for k, v in rep.items() if k not in ("records",)}, indent=2)[:6000])
     return 0 if rep.get("ok", True) else 1
 
@@ -231,11 +271,12 @@ def _side_main(argv: list[str]) -> None:
     p.add_argument("--adapter")
     p.add_argument("--max-lora-rank", type=int, default=64)
     p.add_argument("--side-out", required=True)
+    p.add_argument("--text-only", action="store_true")
     a = p.parse_args(argv)
     if a.side == "hf":
         hf_side(a.bf16, a.adapter, a.items, a.side_out)
     else:
-        vllm_side(a.ct, a.adapter, a.items, a.side_out, a.max_lora_rank)
+        vllm_side(a.ct, a.adapter, a.items, a.side_out, a.max_lora_rank, text_only=a.text_only)
 
 
 if __name__ == "__main__":

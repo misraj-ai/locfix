@@ -34,7 +34,10 @@ Training node / Colab (CUDA):
 ```bash
 pip install "transformers==5.13.1" peft accelerate safetensors compressed-tensors   # + torch with CUDA
 pip install -e .
-# for quant.parity and the smoke test also: pip install "vllm==0.19.1"   (pins its own torch)
+# for quant.parity and the smoke test also vLLM, the COMPETITION build (harness_facts §16):
+#   pip install "vllm==0.19.1"                                         # dependencies
+#   pip install --no-deps --force-reinstall <wheelhouse>/vllm-*.whl    # the build Kaggle scores with
+# (the public PyPI 0.19.1 cannot serve LoRA on Gemma4ForConditionalGeneration)
 ```
 Tested versions: transformers 5.13.1, peft 0.21.2, accelerate 1.15.0, compressed-tensors 0.15.0.1,
 torch 2.14 (CPU tests). The harness wheels are not needed for training.
