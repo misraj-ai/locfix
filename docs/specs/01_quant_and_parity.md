@@ -86,3 +86,12 @@ Report: per-record mean/max |Δ|, fraction of tokens with |Δ| > 0.1, and the ad
   derived target modules (test reads the safetensors keys).
 - Adapter size check: total `adapters/` size reported; the submission packer refuses > 3 GiB in
   total with everything else.
+
+## Implementation status (2026-10-26)
+
+`locfix quant.dequantize` (compressed-tensors' `PackedQuantizationCompressor.decompress`, streamed
+per shard; text-only output; grid check with tolerance |q|·2⁻⁸ ≤ 0.031, the bf16 rounding bound)
+and `locfix quant.parity` (HF and vLLM sides in separate processes; modes base / random adapter /
+trained adapter) are implemented and CPU-tested on tiny checkpoints built with compressed-tensors
+itself. Pending: the first GPU run on E4B and 31B (`notebooks/train_smoke.py`), which also sets the
+parity threshold.

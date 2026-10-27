@@ -1,0 +1,11 @@
+# Stage 1: single agent on full teacher trajectories, 31B.
+#   accelerate launch --config_file configs/accelerate/ddp_8gpu.yaml -m locfix.cli train --config configs/runs/S1-31b.yaml
+train:
+  model: 31b
+  role: agent
+  sources:
+    - {path: "${paths.records}/s1_agent.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/s1_agent.jsonl"}
+  output_dir: "${paths.runs}/S1-31b"
+  epochs: 3

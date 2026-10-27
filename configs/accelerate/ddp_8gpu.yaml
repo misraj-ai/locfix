@@ -1,0 +1,10 @@
+# 8×H200: one full model per GPU (31B bf16 ≈ 62 GB + checkpointed activations at 32K fit), DDP.
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_GPU
+num_machines: 1
+num_processes: 8
+gpu_ids: all
+mixed_precision: bf16
+main_training_function: main
+rdzv_backend: static
+same_network: true

@@ -1,7 +1,8 @@
 # CLAUDE.md — working instructions for this repository
 
 Read this file first, then `docs/PLAN.md`, then the spec for the milestone you are working on
-(`docs/specs/`). Facts about the competition harness are in `docs/reference/harness_facts.md`;
+(`docs/specs/`). The data pipeline (traces → records, commands, formats) is described in `docs/DATA.md`.
+Facts about the competition harness are in `docs/reference/harness_facts.md`;
 treat them as ground truth and do not re-derive them from memory.
 
 ## What this project is

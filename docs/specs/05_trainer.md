@@ -7,8 +7,9 @@ in data and weights, never in training code.
 
 ## Stack
 
-TRL `SFTTrainer` subclass + PEFT LoRA + Accelerate + Liger kernels, on the dequantized bf16 base
-(spec 01). No Unsloth (its patched kernels and loss make custom losses hard to trust).
+transformers `Trainer` subclass + PEFT LoRA + Accelerate, on the dequantized bf16 base (spec 01).
+(Implemented without TRL and Liger: the data pipeline and the loss are our own, and the loss is
+computed in chunks on trained positions only, so neither adds anything.) No Unsloth.
 
 ## Inputs
 
@@ -88,3 +89,23 @@ Per step: loss, token-weighted loss per stage/source in the mix, grad norm, LR, 
 - Overfit test: E4B on 8 records reaches near-zero loss; generation from the trained adapter in
   vLLM reproduces a trained turn (sanity check of the whole train → export → serve path).
 - Stage 1 E4B run completes; tokens/s per GPU logged; parity report passes.
+
+## Implementation status (2026-10-26)
+
+Implemented: `src/locfix/train/` (`data.py`, `loss.py`, `model.py`, `sft.py`, `export.py`),
+`src/locfix/quant/dequantize.py`, `src/locfix/quant/parity.py`, CLI `train`, `train.plan`,
+`quant.dequantize`, `quant.parity`; guide `docs/TRAINING.md`; GPU check `notebooks/train_smoke.py`.
+
+Acceptance status:
+- Loss normalization (devices vs accumulation, and vs a hand-computed SGD step): **passes**
+  (`pytest -m multiproc`). This test found a real DDP bug: Gemma 4 registers RoPE buffers in
+  `set()` order, so ranks hold them in different orders and DDP's positional broadcast corrupts
+  them on every rank but 0. Fixed by sorting buffers before wrapping (`stabilize_buffer_order`).
+- Masking: trained tokens are exactly the renderer's labels (`render_record`, golden-checked);
+  packed rows equal separate records (sdpa and eager, both model shapes).
+- Overfit + vLLM generation, Stage 1 E4B run, tokens/s: pending GPU (`notebooks/train_smoke.py`).
+
+Differences from the text above: packing is optional (`train.packing`, default off; on for
+localizer records); the model is the text-only `Gemma4ForCausalLM` (the dequantizer writes a
+text-only checkpoint; adapter keys then match the layout verified on Kaggle); global batch is
+counted in rows (one record, or several packed records, per row).

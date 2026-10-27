@@ -170,3 +170,73 @@ def trainer_batch(r: Rendered) -> dict[str, list]:
     """What the trainer gets for one example (before padding/packing): the loss is
     sum_t weight_t * CE(logits_{t-1}, input_ids_t) / sum_t weight_t over positions with a label."""
     return {"input_ids": r.input_ids, "labels": r.labels, "loss_weights": r.weights}
+
+
+# --------------------------------------------------------------------------- CLI
+def add_args_cmd_check_records(p) -> None:
+    p.add_argument("records", nargs="+", help="record JSONL files (or folders of them)")
+    p.add_argument("--tokenizer", required=True, help="folder with tokenizer.json, tokenizer_config.json, chat_template.jinja")
+    p.add_argument("--sample", type=int, default=0, help="render only N random records per file (0 = all)")
+    p.add_argument("--max-tokens", type=int, default=32768, help="report records longer than this")
+    p.add_argument("--preview", help="write an HTML preview of one random record per file to this folder")
+
+
+def cmd_check_records(args, cfg: dict) -> int:
+    """Validate record files against schemas/record.schema.json and tokenize them with the
+    renderer the trainer uses. No harness wheels needed."""
+    import random
+    import statistics
+    from pathlib import Path
+
+    import jsonschema
+
+    from .chat import RenderError, load_tokenizer, render_record
+
+    root = Path(__file__).resolve().parents[3]
+    schema = json.loads((root / "schemas" / "record.schema.json").read_text())
+    tok = load_tokenizer(args.tokenizer)
+    files: list[Path] = []
+    for x in args.records:
+        p = Path(x)
+        files.extend(sorted(p.glob("*.jsonl")) if p.is_dir() else [p])
+    rng = random.Random(cfg.get("seed", 0))
+    report, bad = {}, 0
+    for f in files:
+        recs = [json.loads(line) for line in open(f)]
+        errors: list[str] = []
+        for r in recs:
+            try:
+                jsonschema.validate(r, schema)
+            except jsonschema.ValidationError as e:
+                errors.append(f"{r.get('id')}: schema: {e.message}")
+        todo = rng.sample(recs, min(args.sample, len(recs))) if args.sample else recs
+        lens, trained, too_long = [], [], 0
+        for r in todo:
+            try:
+                x = render_record(r, tok)
+            except RenderError as e:
+                errors.append(f"{r['id']}: render: {e}")
+                continue
+            lens.append(len(x.input_ids))
+            trained.append(x.n_trained)
+            too_long += len(x.input_ids) > args.max_tokens
+        report[f.name] = {
+            "records": len(recs), "rendered": len(lens), "errors": len(errors),
+            "tokens_median": int(statistics.median(lens)) if lens else None,
+            "tokens_max": max(lens) if lens else None,
+            "trained_tokens_total": sum(trained), "trained_share": round(sum(trained) / max(sum(lens), 1), 3),
+            f"over_{args.max_tokens}": too_long,
+            "stages": sorted({r["stage"] for r in recs}), "roles": sorted({r["role"] for r in recs}),
+        }
+        for e in errors[:5]:
+            print(f"[{f.name}] {e}")
+        bad += len(errors)
+        if args.preview and recs:
+            out = Path(args.preview)
+            out.mkdir(parents=True, exist_ok=True)
+            r = rng.choice(recs)
+            x = render_record(r, tok)
+            head = "<h3>" + html.escape(r["id"]) + "</h3><pre>" + html.escape(json.dumps(record_summary(r), indent=1)) + "</pre>"
+            (out / f"{f.stem}.html").write_text("<meta charset='utf-8'>" + head + rendered_html(x, height="none"))
+    print(json.dumps(report, indent=2))
+    return 1 if bad else 0

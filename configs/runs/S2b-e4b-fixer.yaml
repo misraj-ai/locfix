@@ -1,0 +1,14 @@
+# Stage 2b fixer (strong baseline): gold + noisy z with requests. About 3 fixer records per task
+# end with the same teacher fix, so one epoch already shows each fix ~3 times (target_visits_per_patch).
+# Check `locfix train.plan --config ...` (visits_per_task) before launching.
+train:
+  model: e4b
+  role: fixer
+  sources:
+    - {path: "${paths.records}/locfix/s2_fix_gold.jsonl"}
+    - {path: "${paths.records}/locfix/s2_fix_noisy.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s2_fix_gold.jsonl"}
+    - {path: "${paths.records}/val/locfix/s2_fix_noisy.jsonl"}
+  output_dir: "${paths.runs}/S2b-e4b/fixer"
+  epochs: 1

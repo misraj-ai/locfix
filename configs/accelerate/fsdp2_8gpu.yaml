@@ -1,0 +1,15 @@
+# H100 (80 GB): 31B does not fit with activations on one GPU -> FSDP2 across GPUs.
+# Not exercised in the CPU tests; run the overfit test (notebooks/colab_train_smoke.py) with it first.
+compute_environment: LOCAL_MACHINE
+distributed_type: FSDP
+num_machines: 1
+num_processes: 8
+mixed_precision: bf16
+fsdp_config:
+  fsdp_version: 2
+  fsdp_auto_wrap_policy: TRANSFORMER_BASED_WRAP
+  fsdp_transformer_layer_cls_to_wrap: Gemma4TextDecoderLayer
+  fsdp_state_dict_type: FULL_STATE_DICT
+  fsdp_cpu_ram_efficient_loading: true
+  fsdp_reshard_after_forward: true
+  fsdp_activation_checkpointing: false

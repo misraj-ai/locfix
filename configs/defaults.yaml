@@ -73,18 +73,37 @@ generation:                    # agent sampling; keep the team's tested values u
 
 data:
   training_layout: auto        # one_sequence | per_turn; set by the prefix-consistency test (spec 02)
+  replay_compaction: false     # replay with the harness's context compaction (needs a summarizer, spec 03)
   val_fraction: 0.03
   exclude_repos: [fastapi, requests, rich, httpx]   # dev-set repositories (match any owner)
   heldout_size: 300
 
-train:
+train:                         # `locfix train` (src/locfix/train/sft.py); a run config sets model,
+  model: e4b                   # role, sources and output_dir
+  role: agent                  # agent | fixer | localizer (which adapter this run trains)
+  sources: []                  # [{path, weight: 1.0, repeat: 1.0, name}] record files and their mix
+  val_sources: []              # held-out record files: NLL per stage at every epoch end
+  output_dir: null
+  base_model: null             # default: models.<model>.dequantized
+  tokenizer: null              # default: the base model folder
+  init_adapter: null           # warm start from an adapter folder (EM rounds, Stage 5)
+  lr_scale: 1.0                # multiplies lr[model] (0.5 for warm starts)
+  learning_rate: null          # explicit LR instead of lr[model] × lr_scale
   max_seq_len: 32768
   lora: {r: 64, alpha: 32, dropout: 0.0, use_rslora: false}
-  optimizer: {name: adamw, betas: [0.9, 0.999], weight_decay: 0.0, grad_clip: 1.0}
+  optimizer: {name: adamw, hf_name: adamw_torch, betas: [0.9, 0.999], weight_decay: 0.0, grad_clip: 1.0}
   schedule: {warmup_steps: 10, decay: cosine, min_lr_ratio: 0.1}
-  global_batch_sequences: 16
-  per_device_batch: 1
+  global_batch_sequences: 16   # rows per optimizer step (all GPUs × accumulation × per_device_batch)
+  per_device_batch: 1          # rows per forward (rows are packed or single records; no padding)
   gradient_checkpointing: true
+  packing: false               # true: several short records per row (first-fit, ≤ max_seq_len tokens)
+  attn_implementation: sdpa    # sdpa (tested, packing-safe) | flex_attention | flash_attention_2
+  ce_chunk: 1024               # trained tokens per chunk of the vocabulary projection
+  bf16: true
+  cache_dir: ${paths.records}/token_cache   # tokenized records (reused across runs)
+  logging_steps: 1
+  report_to: []                # e.g. [wandb]
+  export: true                 # write vLLM-ready adapters (k_eq_v fix, bf16) under <output_dir>/export
   lr: {e4b: 2.0e-4, 31b: 1.0e-4, 12b: 1.0e-4}
   epochs: 3
   save_every_epoch: true

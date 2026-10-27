@@ -35,3 +35,15 @@ def test_rendered_views():
     end = I.token_rows(r, tok, span=0, at="end", before=2, after=2)
     assert end[1]["piece"] == repr("<|tool_response>") and end[1]["in loss"] == "✓"
     assert end[2]["in loss"] == ""
+
+
+def test_check_records_cli(capsys):
+    tok_dir = ROOT / "work" / "model_meta" / "e4b"
+    if not (tok_dir / "tokenizer.json").exists():
+        pytest.skip("tokenizer not available")
+    from locfix.cli import main
+
+    assert main(["data.check-records", str(RECORDS), "--tokenizer", str(tok_dir), "--sample", "2"]) == 0
+    out = capsys.readouterr().out
+    report = json.loads(out[out.index("{"):])
+    assert report["s1_fixtures.jsonl"]["errors"] == 0 and report["locfix_fixtures.jsonl"]["rendered"] == 2

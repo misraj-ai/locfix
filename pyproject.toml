@@ -17,8 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 # Harness wheels are not on PyPI: install them from vendor/ (see README).
-harness = ["google-adk>=1.34,<2", "litellm>=1.0", "mcp>=2"]  # litellm>=1.106 imports mcp 2.x types
-train = ["transformers==5.13.1", "peft", "trl", "accelerate", "liger-kernel", "safetensors", "compressed-tensors"]
+harness = ["google-adk==1.39.1", "litellm==1.106.3"]  # then `pip install mcp==2.3.0` (litellm needs mcp 2.x; google-adk declares <2): see README
+train = ["transformers==5.13.1", "peft", "accelerate", "safetensors", "compressed-tensors"]
 serve = ["vllm==0.19.1", "transformers==5.13.1"]
 dev = ["pytest>=8", "ruff"]
 
@@ -34,12 +34,14 @@ markers = [
   "gpu: needs a CUDA GPU",
   "hf: needs Hugging Face downloads (tokenizer or model)",
   "vllm: needs vLLM",
+  "multiproc: starts 2 training processes (run alone: pytest -m multiproc; ~1 min, ~3 GB RAM)",
 ]
-addopts = "-m 'not gpu and not hf and not vllm'"
+addopts = "-m 'not gpu and not hf and not vllm and not multiproc'"
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["*.ipynb"]      # notebooks are generated (tools/build_inspect_notebook.py)
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "B", "UP"]

@@ -1,0 +1,10 @@
+# Stage 2a fixer: always the full z (gold), no requests. Standard two-model pipeline.
+train:
+  model: e4b
+  role: fixer
+  sources:
+    - {path: "${paths.records}/locfix/s2_fix_gold.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s2_fix_gold.jsonl"}
+  output_dir: "${paths.runs}/S2a-e4b/fixer"
+  epochs: 3

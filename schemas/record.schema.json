@@ -48,7 +48,7 @@
       "description": "Character spans inside messages for scoring y*_+ (spec 06). Each item: [message_index, field_path, start, end].",
       "properties": {"score_plus": {"type": "array", "items": {"type": "array"}}}
     },
-    "z": {"type": ["object", "null"], "description": "Localization used by this record (localizer/fixer records)"},
+    "z": {"type": ["array", "object", "null"], "description": "Localization used by this record (localizer/fixer records): list of {path, symbol, lines: [start, end], role}"},
     "meta": {
       "type": "object",
       "description": "Builder information: n_counted_calls, projected_seconds, compaction_window, trace_entry_ids, budget, summarizer, synthetic_steps, cleaning version, builder_version, git_sha"

@@ -83,40 +83,70 @@ sys.path.insert(0, str(ROOT / "src"))          # use the code in place (no insta
 print("code:", ROOT)
 ''')
 code('''
-# --- Data on Google Drive and the harness wheels
+# --- Where the data is (Google Drive)
+# RECORDS_DIR: folder with records already built by `locfix data.agent-records` /
+#   `data.locfix-records` (docs/DATA.md, step 2). Set it to only look at records: no harness wheels
+#   needed. Leave None to build the records of a random task live (needs WHEELS_DIR).
+RECORDS_DIR = None                                       # e.g. "/content/drive/MyDrive/records"
 DATA_DIR = "/content/drive/MyDrive/codeagent_final"     # folder with cleaned/, experiment/, ...
 WHEELS_DIR = "/content/drive/MyDrive/wheels"             # swegemma, adk_submission, adk_eval_core .whl
 
-if IN_COLAB and DATA_DIR.startswith("/content/drive"):
+if IN_COLAB and any(str(p).startswith("/content/drive") for p in (RECORDS_DIR, DATA_DIR, WHEELS_DIR) if p):
     from google.colab import drive
     drive.mount("/content/drive")
-for p in (DATA_DIR, WHEELS_DIR):
-    print(p, "found" if pathlib.Path(p).exists() else "NOT FOUND")
+for p in (RECORDS_DIR, DATA_DIR, WHEELS_DIR):
+    if p:
+        print(p, "found" if pathlib.Path(p).exists() else "NOT FOUND")
 ''')
 code('''
-# --- Python packages: harness wheels + ADK (replay), transformers 5.13.1 (tokenizer/chat template)
+# --- Python packages
+# From WHEELS_DIR only the three harness wheels are installed (pure Python, any Python >= 3.12);
+# the rest of the Kaggle wheelhouse (vLLM, cp312 builds, ...) is not needed and would not install.
+# Versions are pinned to the ones the code is tested with (also on Python 3.13).
 import importlib.util
+import importlib.metadata as md
+
+HARNESS_WHEELS = ("swegemma-", "adk_submission-", "adk_eval_core-")
+PINS = ["google-adk==1.39.1", "litellm==1.106.3", "transformers==5.13.1", "docker", "cachetools",
+        "networkx", "python-dotenv", "rich", "pandas", "safetensors", "pyyaml", "jsonschema"]
+
 
 def missing(mod):
     return importlib.util.find_spec(mod) is None
 
-need = []
-if missing("swegemma") or missing("adk_submission"):
-    wheels = sorted(str(p) for p in pathlib.Path(WHEELS_DIR).glob("*.whl"))
-    assert wheels, f"no .whl files in {WHEELS_DIR}"
-    need += [*wheels, "google-adk>=1.34,<2", "litellm", "mcp>=2"]
-import importlib.metadata as md
+
+def pip(*args):
+    r = subprocess.run([sys.executable, "-m", "pip", "install", "-q", *args], capture_output=True, text=True)
+    if r.returncode:
+        print(r.stdout[-4000:], r.stderr[-4000:])
+        raise RuntimeError("pip install failed; see the output above")
+
+
+if RECORDS_DIR is None and (missing("swegemma") or missing("adk_submission") or missing("adk_eval_core")):
+    wheels = [p for p in sorted(pathlib.Path(WHEELS_DIR).glob("*.whl")) if p.name.startswith(HARNESS_WHEELS)]
+    found = sorted({w.name.split("-")[0] for w in wheels})
+    assert len(found) == 3, f"need swegemma, adk_submission and adk_eval_core wheels in {WHEELS_DIR}; found {found}"
+    pip("--no-deps", *map(str, wheels))   # their torch/torchvision/accelerate requirements are not used here
+    pip(*PINS)
+    pip("mcp==2.3.0")                     # litellm 1.106.3 needs mcp 2.x; google-adk declares mcp<2 but works
+                                          # with it (pip prints a dependency warning: expected)
 try:
     tf_ok = md.version("transformers") == "5.13.1"
 except md.PackageNotFoundError:
     tf_ok = False
 if not tf_ok:
-    need += ["transformers==5.13.1"]
-if need:
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *need, "pyyaml", "jsonschema", "pandas"],
-                   check=True)
-print("transformers", md.version("transformers"), "| google-adk", md.version("google-adk"),
-      "| swegemma", md.version("swegemma"))
+    pip("transformers==5.13.1", "pyyaml", "jsonschema", "pandas")
+
+
+def version(p):
+    try:
+        return md.version(p)
+    except md.PackageNotFoundError:
+        return "-"
+
+
+print("python", sys.version.split()[0],
+      {p: version(p) for p in ("transformers", "swegemma", "adk-submission", "google-adk", "litellm", "mcp")})
 ''')
 code('''
 # --- Gemma 4 tokenizer + chat template (3 small files, no weights)
@@ -174,8 +204,9 @@ md("""
 ## 1. Pick a random task and build its records
 
 `SEED = None` gives a new task on every run; set an integer to reproduce one, or `INSTANCE` to a
-task id. A task is skipped (and another one drawn) when it cannot give both kinds of records; the
-reason is printed (e.g. `over budget`: the trajectory needs more tool calls than our budget).
+task id. With `RECORDS_DIR` set, the task is drawn from the record files. Otherwise its records are
+built live, and a task is skipped (another one drawn) when it cannot give both kinds of records;
+the reason is printed (e.g. `over budget`: the trajectory needs more tool calls than our budget).
 
 **Code at the base commit** (needed for the fixer's reads of z): taken from `code/<id>.json` when
 the data has one; otherwise rebuilt from the lines the teacher printed, and reads are limited to
@@ -187,54 +218,79 @@ INSTANCE = None        # e.g. "benoitc__gunicorn.bacbf8aa.lm_rewrite__9mzalywg" 
 MAX_TRIES = 25
 
 from locfix.config import load_config
-from locfix.data.agent_records import BuildConfig, build_agent_records
-from locfix.data.dataset import SolvedData
-from locfix.data.loc_fix_records import LocFixConfig, TaskSkip, build_task_records
-from locfix.harness.budget import BudgetExceeded
-from locfix.harness.prompts import Budget
+from locfix.data.traces import load_trace
 
 cfg = load_config()
-data = SolvedData(DATA_DIR, exclude_repos=cfg["data"]["exclude_repos"])
-print(f"{len(data.trace_paths())} traces, {len(data.rows)} solved rows; code folders:",
-      [str(d) for d in data.code_dirs if d.exists()] or "none (code rebuilt from traces)")
-
-b, bl = cfg["budget"], cfg["budget_locfix"]
-bc = BuildConfig(agent_dir="agents/single", model_alias=cfg["models"]["31b"]["serve_id"],
-                 budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]))
-lc = LocFixConfig(agent_dir="agents/locfix", model_alias=cfg["models"]["31b"]["serve_id"],
-                  budget=Budget(bl["max_time_minutes"], bl["max_tool_calls"], bl["max_turns"]),
-                  em=cfg["em"], seed=cfg["seed"])
-
 rng = random.Random(SEED)
-paths = data.trace_paths()
-if INSTANCE:
-    paths = [p for p in paths if p.name.startswith(INSTANCE)]
-rng.shuffle(paths)
-for trace_path in paths[:MAX_TRIES]:
-    try:
-        task, code_info = data.task(trace_path)
-        s1 = build_agent_records(task.trace, bc, task.source, task.problem_statement)
-        counts = {}
-        lf = build_task_records(task, lc, counts)
-    except BudgetExceeded as e:
-        print(f"skip {trace_path.name}: over budget ({e})")
-        continue
-    except TaskSkip as e:
-        print(f"skip {trace_path.name}: {e}")
-        continue
-    if not lf:
-        print(f"skip {trace_path.name}: no localizer/fixer records {counts}")
-        continue
-    break
-else:
-    raise RuntimeError("no usable task found; raise MAX_TRIES")
+code_info = None
 
-trace = task.trace
-row = data.row(task.instance_id)
-show_json({"instance_id": task.instance_id, "trace": trace_path.name, "repo": row.get("repo"),
-           "dataset": row.get("verifier"), "fold": row.get("fold"),
-           "teacher tool calls": trace.n_counted_calls, "teacher turns": len(trace.turns),
-           "code": code_info.source, "code coverage (trace)": code_info.coverage,
+if RECORDS_DIR:
+    by_task = {}
+    for f in sorted(pathlib.Path(RECORDS_DIR).rglob("*.jsonl")):
+        for line in open(f):
+            r = json.loads(line)
+            by_task.setdefault(r["instance_id"], []).append(r)
+    ids = sorted(i for i, rs in by_task.items()
+                 if any(r["role"] == "agent" for r in rs) and any(r["role"] != "agent" for r in rs))
+    if INSTANCE:
+        ids = [i for i in ids if i.startswith(INSTANCE)]
+    assert ids, "no task with both single-agent and localizer/fixer records in RECORDS_DIR"
+    iid = rng.choice(ids)
+    s1 = [r for r in by_task[iid] if r["role"] == "agent"]
+    lf = [r for r in by_task[iid] if r["role"] != "agent"]
+    counts = {}
+    for r in lf:
+        counts[r["stage"]] = counts.get(r["stage"], 0) + 1
+    name = (s1[0]["meta"] or {}).get("trace", "")
+    trace_path = pathlib.Path(DATA_DIR) / "cleaned" / "traces" / name
+    trace = load_trace(trace_path) if name and trace_path.exists() else None
+    print(f"{len(ids)} tasks in {RECORDS_DIR}")
+else:
+    from locfix.data.agent_records import BuildConfig, build_agent_records
+    from locfix.data.dataset import SolvedData
+    from locfix.data.loc_fix_records import LocFixConfig, TaskSkip, build_task_records
+    from locfix.harness.budget import BudgetExceeded
+    from locfix.harness.prompts import Budget
+
+    data = SolvedData(DATA_DIR, exclude_repos=cfg["data"]["exclude_repos"])
+    print(f"{len(data.trace_paths())} traces, {len(data.rows)} solved rows; code folders:",
+          [str(d) for d in data.code_dirs if d.exists()] or "none (code rebuilt from traces)")
+    b, bl = cfg["budget"], cfg["budget_locfix"]
+    bc = BuildConfig(agent_dir="agents/single", model_alias=cfg["models"]["31b"]["serve_id"],
+                     budget=Budget(b["max_time_minutes"], b["max_tool_calls"], b["max_turns"]))
+    lc = LocFixConfig(agent_dir="agents/locfix", model_alias=cfg["models"]["31b"]["serve_id"],
+                      budget=Budget(bl["max_time_minutes"], bl["max_tool_calls"], bl["max_turns"]),
+                      em=cfg["em"], seed=cfg["seed"])
+    paths = data.trace_paths()
+    if INSTANCE:
+        paths = [p for p in paths if p.name.startswith(INSTANCE)]
+    rng.shuffle(paths)
+    for trace_path in paths[:MAX_TRIES]:
+        try:
+            task, code_info = data.task(trace_path)
+            s1 = build_agent_records(task.trace, bc, task.source, task.problem_statement)
+            counts = {}
+            lf = build_task_records(task, lc, counts)
+        except BudgetExceeded as e:
+            print(f"skip {trace_path.name}: over budget ({e})")
+            continue
+        except TaskSkip as e:
+            print(f"skip {trace_path.name}: {e}")
+            continue
+        if not lf:
+            print(f"skip {trace_path.name}: no localizer/fixer records {counts}")
+            continue
+        break
+    else:
+        raise RuntimeError("no usable task found; raise MAX_TRIES")
+    trace, iid = task.trace, task.instance_id
+
+r0 = s1[0]
+show_json({"instance_id": iid, "trace": trace_path.name if trace else None,
+           "dataset": r0["source"].get("dataset"), "fold": r0["source"].get("fold"),
+           "teacher tool calls": trace.n_counted_calls if trace else None,
+           "teacher turns": len(trace.turns) if trace else None,
+           "code": code_info.source if code_info else (lf[0]["meta"].get("code_source") if lf else None),
            "records": {"single agent": len(s1), "localizer/fixer": counts}})
 ''')
 
@@ -245,7 +301,12 @@ The raw log of Kimi-K3 solving the task with **our harness** (after recall clean
 instruction, task prompt, then `thinking`, `tool_call`, `tool_response` entries and the final
 text. It was recorded with the teacher's budget (8 minutes, 100 tool calls).
 """)
-code('table(I.trace_rows(trace.entries, 140))')
+code('''
+if trace is not None:
+    table(I.trace_rows(trace.entries, 140))
+else:
+    print("trace file not found under DATA_DIR/cleaned/traces")
+''')
 
 md("""
 ## 2. Single agent (Stage 1)
@@ -278,7 +339,7 @@ code('''
 import difflib
 sys_rec = I.content_text(rec["messages"][0])
 user_rec = I.content_text(rec["messages"][1])
-teacher_sys, teacher_user = trace.system_instruction, trace.task_prompt
+teacher_sys, teacher_user = (trace.system_instruction, trace.task_prompt) if trace else ("", "")
 for name, a, b in (("system", teacher_sys, sys_rec), ("task prompt", teacher_user, user_rec)):
     print(f"--- {name}: teacher -> record")
     print("\\n".join(difflib.unified_diff(a.splitlines(), b.splitlines(), lineterm="", n=0)) or "(identical)")

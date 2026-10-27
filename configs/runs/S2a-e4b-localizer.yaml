@@ -1,0 +1,11 @@
+# Stage 2a/2b localizer: target = the functions the teacher edited (L_edit).
+train:
+  model: e4b
+  role: localizer
+  sources:
+    - {path: "${paths.records}/locfix/s2_loc_edit.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s2_loc_edit.jsonl"}
+  output_dir: "${paths.runs}/S2a-e4b/localizer"
+  packing: true              # localizer records are short (2-12K tokens)
+  epochs: 3

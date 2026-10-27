@@ -32,18 +32,32 @@ Built for the Kaggle *Gemma 4 Developer Agent* competition and its paper track.
 See `CLAUDE.md` (repository layout and rules) and `docs/PLAN.md` (milestones). Component specs
 are in `docs/specs/`, harness facts in `docs/reference/harness_facts.md`.
 
+## Data
+
+How teacher traces become training records (inputs, commands, outputs, record format):
+[`docs/DATA.md`](docs/DATA.md).
+
+## Training
+
+Dequantize, train, export and check adapters: [`docs/TRAINING.md`](docs/TRAINING.md).
+
 ## Development setup (CPU)
 
 The competition harness wheels are not on PyPI; put them in `vendor/` first
 (`swegemma-0.2.11`, `adk_submission-0.2.13`, `adk_eval_core-0.1.0`).
 
 ```bash
-uv venv -p 3.12 .venv
-uv pip install -p .venv/bin/python vendor/*.whl "google-adk>=1.34,<2" "mcp>=2" \
-    "transformers==5.13.1" peft safetensors
-uv pip install -p .venv/bin/python -e ".[dev]"
-.venv/bin/python -m pytest -q          # CPU tests; GPU/HF/vLLM tests are marked and skipped
+python -m venv .venv && . .venv/bin/activate          # Python >= 3.12 (tested on 3.12 and 3.13)
+pip install --no-deps vendor/swegemma-*.whl vendor/adk_submission-*.whl vendor/adk_eval_core-*.whl
+pip install "google-adk==1.39.1" "litellm==1.106.3" "transformers==5.13.1" docker cachetools \
+    networkx python-dotenv rich pandas safetensors pyyaml jsonschema peft
+pip install "mcp==2.3.0"   # litellm needs mcp 2.x; google-adk declares mcp<2 (pip warns: expected)
+pip install -e ".[dev]"
+python -m pytest -q        # CPU tests; GPU/HF/vLLM tests are marked and skipped
 ```
+
+Only the three harness wheels are needed from the Kaggle wheelhouse; `--no-deps` skips their
+torch/torchvision/accelerate requirements, which the data code does not use.
 
 GPU steps run from `notebooks/` on Kaggle, Colab or the training node (see `docs/PLAN.md` §1b).
 
