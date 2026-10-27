@@ -52,13 +52,13 @@ harness:                       # must equal the Kaggle scorer (docs/reference/ha
   command_timeout_seconds: 300
 
 budget:                        # eval_config.yaml of the submission; records are built with the same values
-  max_time_minutes: 5          # Kaggle cuts the agent at this time and grades its git diff
-  max_tool_calls: 40           # keeps 94.8% of cleaned_v2; warning fires at <= 10 remaining
+  max_time_minutes: 8          # the teacher's own limit (training setting; the submission may differ)
+  max_tool_calls: 36           # keeps 92.5% of cleaned_v2; warning fires at <= 10 remaining
   max_turns: 300
 
 budget_locfix:                 # agents/locfix/eval_config.yaml. The localizer's calls and the fixer's
-  max_time_minutes: 5          # reads of z share one task budget, so the two-agent structure needs
-  max_tool_calls: 48           # more calls than the single agent for the same work (spec 04 §5): +8
+  max_time_minutes: 8          # reads of z share one task budget, so the two-agent structure needs
+  max_tool_calls: 44           # more calls than the single agent for the same work (spec 04 §5): +8
   max_turns: 300
 
 timing:                        # from timing (spec 07); tokens/s on Kaggle 4xL4
@@ -73,6 +73,8 @@ generation:                    # agent sampling; keep the team's tested values u
 data:
   training_layout: auto        # one_sequence | per_turn; set by the prefix-consistency test (spec 02)
   replay_compaction: false     # replay with the harness's context compaction (needs a summarizer, spec 03)
+  max_trace_tokens: 32768      # record builders (with --tokenizer): drop a trajectory if any of its
+                               # records renders longer than this (two-agent: drop that record)
   teacher_time_minutes: 8      # time limit the teacher trajectories were generated with
   time_scale: auto             # get_status clock = teacher clock x time_scale; auto = budget minutes /
                                # teacher_time_minutes (the teacher's used fraction of its time is kept)

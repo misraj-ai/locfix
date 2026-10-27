@@ -103,28 +103,46 @@ build them once with a large budget (`--set budget.max_tool_calls=100 --set
 budget_locfix.max_tool_calls=100`), read the statistics, then rebuild with the chosen budget.
 (`locfix data.traces-stats` is the older, smaller summary.)
 
+### Step 2 on Colab (recommended): `notebooks/build_records.ipynb`
+
+One notebook runs steps 2a, 2b, the checks, the statistics and the train/validation split on a
+Colab CPU runtime, in parallel parts that survive a disconnect (finished parts are kept on Drive),
+and writes `records_<TAG>.tar.gz` to Drive. Unpacked on the training node it gives the layout the
+run configs expect:
+
+```
+work/records/s1_agent.jsonl                 work/records/val/s1_agent.jsonl
+work/records/locfix/s2_*.jsonl, s3_loc_r0   work/records/val/locfix/...
+work/records/stats/stats.md, summary.json, s1_agent.tasks.txt, *_manifest.json
+```
+
+The sections below are the same steps as commands.
+
 ### Step 2a: single-agent records (Stage 1)
 
 ```bash
-locfix data.agent-records codeagent_final/cleaned/traces \
-    --solved codeagent_final/cleaned/solved.jsonl \
-    --out work/records/s1_agent.jsonl
+locfix data.agent-records codeagent_final/cleaned_v2/traces \
+    --solved codeagent_final/cleaned_v2/solved.jsonl \
+    --tokenizer <tokenizer dir> --out work/build/s1/s1_agent.jsonl
 ```
 
 | | |
 | --- | --- |
-| Input | traces folder, `solved.jsonl`; agent `agents/single/`; budget `budget.*` |
-| Output | `s1_agent.jsonl` (one record per segment of a trajectory, see §4) and `run_meta.json` with `counts`: `traces`, `records`, `skip_dev_repo`, `skip_over_budget`, `error:<type>` |
+| Input | traces folder, `solved.jsonl`; agent `agents/single/`; budget `budget.*`; the tokenizer (for `data.max_trace_tokens`) |
+| Output | `s1_agent.jsonl` (one record per segment of a trajectory, see §4; `meta.n_tokens` = rendered length), `s1_agent.tasks.txt` (trace files kept), `run_meta.json` with `counts`: `traces`, `traces_kept`, `records`, `skip_dev_repo`, `skip_not_in_solved`, `skip_over_budget`, `skip_too_long`, `error:<type>` |
 | Time | about 0.8 s per trace (≈ 20 min for 1,577 traces, one process) |
-| Options | `--limit N` (first N traces) |
+| Options | `--limit N` (first N traces), `--shard K/N` (part K of N; merge with `data.merge-records`) |
+
+A trajectory is dropped as a whole (`skip_too_long`) if any of its records renders to more than
+`data.max_trace_tokens` (32,768) tokens.
 
 ### Step 2b: localizer and fixer records (Stages 2 and 3, round 0)
 
 ```bash
-locfix data.locfix-records codeagent_final/cleaned/traces \
-    --solved codeagent_final/cleaned/solved.jsonl \
-    --code codeagent_final/cleaned/code --code codeagent_final/experiment/code \
-    --out work/records/locfix
+locfix data.locfix-records codeagent_final/cleaned_v2/traces \
+    --solved codeagent_final/cleaned_v2/solved.jsonl \
+    --code codeagent_final/cleaned_v2/code --code codeagent_final/experiment/code \
+    --tasks work/build/s1/s1_agent.tasks.txt --tokenizer <tokenizer dir> --out work/build/locfix
 ```
 
 | | |
@@ -132,7 +150,21 @@ locfix data.locfix-records codeagent_final/cleaned/traces \
 | Input | traces, `solved.jsonl`, code folders (searched in order); agent `agents/locfix/` (fixer root + `localizer` as `agent_tool`); budget `budget_locfix.*`; `em.*` settings |
 | Output | one file per stage (table below), `manifest.json` (counts) and `run_meta.json` |
 | Time | about 3 s per task (one replay per variant of z; ≈ 80 min for 1,577 tasks) |
-| Options | `--code DIR` (repeatable), `--no-code-fallback` (drop tasks without a code file instead of rebuilding code from the trace), `--limit N` |
+| Options | `--code DIR` (repeatable), `--no-code-fallback` (drop tasks without a code file instead of rebuilding code from the trace), `--tasks FILE` (only these trace files: use step 2a's list so both methods train on the same tasks), `--tokenizer`, `--shard K/N`, `--limit N` |
+
+With `--tokenizer`, a localizer or fixer record longer than `data.max_trace_tokens` is dropped on
+its own (`drop:<stage>:too_long`).
+
+### Step 2c: merge parts, split train / validation
+
+```bash
+locfix data.merge-records work/build/parts/s1/0 work/build/parts/s1/1 ... --out work/build/s1   # only after --shard
+locfix data.split work/build/s1/s1_agent.jsonl work/build/locfix --out work/records
+```
+
+`data.split` sends `data.val_fraction` (3%) of the **tasks** to `work/records/val/` (seeded hash of
+the instance id: every record of a task, in every stage, on the same side) and writes
+`val/val_tasks.txt`.
 
 Each trace is split at the teacher's **first edit**. The **localizer** conversation is the
 teacher's exploration before it (only `run_command`/`read_file` calls), ending with an answer z, a
@@ -245,7 +277,10 @@ compaction path exists and is tested but needs a summarizer (spec 03).
 | --- | --- | --- |
 | `skip_dev_repo` / `skip:dev_repo` | 2a, 2b | repository of the dev set (`data.exclude_repos`) |
 | `skip_over_budget` / `drop:<variant>:over_budget` | 2a, 2b | needs more counted tool calls than the budget (2b: localizer + fixer calls together) |
-| `skip:not_in_solved` | 2b | trace without a row in `solved.jsonl` |
+| `skip:not_in_solved` / `skip_not_in_solved` | 2a, 2b | trace without a row in `solved.jsonl` (e.g. removed by the cleaning's patch audit) |
+| `skip_too_long` | 2a | a record of the trajectory renders longer than `data.max_trace_tokens` |
+| `drop:<stage>:too_long` | 2b | this record renders longer than `data.max_trace_tokens` |
+| `skip:not_in_task_list` | 2b | trace not in the `--tasks` list (dropped in step 2a) |
 | `skip:no_edit` | 2b | trajectory never edits a file |
 | `skip:mixed_first_edit_turn` | 2b | the first edit shares a turn with exploration calls |
 | `skip:missing_code` | 2b | no code for an edited file (no code file, and the teacher never printed it in a usable form) |
@@ -262,10 +297,12 @@ or `--set`. They must match the submission's `agents/*/eval_config.yaml`.
 
 | Key | Default | Effect |
 | --- | --- | --- |
-| `budget.max_time_minutes`, `budget.max_tool_calls`, `budget.max_turns` | 5, 40, 300 | single-agent budget (prompt, warnings, `get_status`, over-budget drops) |
-| `budget_locfix.*` | 5, 48, 300 | the same for the two-agent records (+8 calls: the fixer re-reads the localizer's locations) |
-| `data.teacher_time_minutes`, `data.time_scale` | 8, auto | clock shown by `get_status`: teacher's elapsed time × scale; `auto` = budget minutes / teacher minutes (0.625), so the teacher's used share of its time is kept |
+| `budget.max_time_minutes`, `budget.max_tool_calls`, `budget.max_turns` | 8, 36, 300 | single-agent budget (prompt, warnings, `get_status`, over-budget drops) |
+| `budget_locfix.*` | 8, 44, 300 | the same for the two-agent records (+8 calls: the fixer re-reads the localizer's locations) |
+| `data.teacher_time_minutes`, `data.time_scale` | 8, auto | clock shown by `get_status`: teacher's elapsed time × scale; `auto` = budget minutes / teacher minutes (1.0 with the 8-minute budget; 0.625 for 5 minutes), so the teacher's used share of its time is kept |
 | `data.exclude_repos` | fastapi, requests, rich, httpx | repositories of the dev set |
+| `data.max_trace_tokens` | 32768 | longest rendered record kept (needs `--tokenizer`; single agent: the whole trajectory is dropped) |
+| `data.val_fraction` | 0.03 | share of tasks in the validation files (`data.split`) |
 | `data.training_layout` | auto | `auto`/`one_sequence`: one record per segment; `per_turn`: one record per model call |
 | `data.replay_compaction` | false | replay with the harness's context compaction |
 | `em.max_locations`, `em.ctx_budget_tokens` | 8, 6000 | size of z |

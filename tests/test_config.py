@@ -11,15 +11,17 @@ def test_defaults_load_and_resolve():
     assert cfg["versions"]["transformers"] == "5.13.1"
     assert cfg["models"]["e4b"]["dequantized"].endswith("gemma4-e4b-w4a16-dequant-bf16")
     assert "${" not in cfg["models"]["31b"]["dequantized"]
-    assert cfg["budget"]["max_tool_calls"] == 40
-    assert cfg["budget_locfix"]["max_tool_calls"] == 48
+    assert cfg["budget"]["max_tool_calls"] == 36
+    assert cfg["budget_locfix"]["max_tool_calls"] == 44
+    assert cfg["data"]["max_trace_tokens"] == cfg["train"]["max_seq_len"] == 32768
 
 
 def test_time_scale_from_cfg():
     from locfix.harness.budget import time_scale_from_cfg
 
     cfg = load_config()
-    assert time_scale_from_cfg(cfg, "budget") == pytest.approx(5 / 8)       # auto: 8-min teacher, 5-min budget
+    assert time_scale_from_cfg(cfg, "budget") == 1.0                        # auto: 8-min teacher, 8-min budget
+    assert time_scale_from_cfg(load_config(None, ["budget.max_time_minutes=5"])) == pytest.approx(5 / 8)
     assert time_scale_from_cfg(load_config(None, ["data.time_scale=2.5"])) == 2.5
     assert time_scale_from_cfg(load_config(None, ["data.teacher_time_minutes=null"])) == 1.0
     with pytest.raises(ValueError):

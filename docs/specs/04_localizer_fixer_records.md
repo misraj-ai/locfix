@@ -24,7 +24,7 @@ agents/locfix/sub_agents/localizer.yaml   # localizer, adapter: loc_lora
   harness injects a continuation nudge (harness_facts §15).
 - The localizer runs in a fresh session (copy of the parent's state), **without compaction**
   (harness_facts §9 item 4), and its tool calls count toward the same task budget. The locfix
-  agent therefore gets its own budget, `budget_locfix` (48 calls, 5 min; 40 before the cleaned_v2 statistics), because the fixer's reads
+  agent therefore gets its own budget, `budget_locfix` (44 calls, 8 min = the single agent's 36 + 8), because the fixer's reads
   of z come on top of the exploration. Its exploration
   must therefore stay short: cap at `em.localizer_max_calls` (default 15) and within 32K tokens.
 - "Single model, two roles" ablation: same YAMLs, one adapter for both.

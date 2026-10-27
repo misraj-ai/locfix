@@ -233,10 +233,14 @@ def add_args_cmd_agent_records(p: argparse.ArgumentParser) -> None:
     p.add_argument("--out", required=True, help="output JSONL")
     p.add_argument("--solved", help="solved.jsonl (instance_id, fold, verifier, problem_statement)")
     p.add_argument("--limit", type=int, default=0)
+    from .build_common import add_common_args
+
+    add_common_args(p)
 
 
 def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
     from ..harness.budget import time_scale_from_cfg
+    from .build_common import Lengths, in_shard, tasks_file_for
     from ..runmeta import write_run_meta
 
     b = cfg["budget"]
@@ -254,13 +258,18 @@ def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
                 r = json.loads(line)
                 rows[r["instance_id"]] = r
     exclude = [x.lower() for x in cfg["data"].get("exclude_repos", [])]
+    lengths = Lengths(getattr(args, "tokenizer", None), cfg["data"].get("max_trace_tokens"))
+    shard = getattr(args, "shard", None)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {"traces": 0, "records": 0}
+    kept: list[str] = []
     with open(out, "w") as f:
         for i, p in enumerate(sorted(Path(args.traces).glob("*.json"))):
             if args.limit and i >= args.limit:
                 break
+            if not in_shard(i, shard):
+                continue
             counts["traces"] += 1
             try:
                 tr = load_trace(p)
@@ -276,6 +285,9 @@ def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
                 source = {"set": "solved", "dataset": row.get("verifier", "other"),
                           "fold": row.get("fold", "A"), "attempt": tr.attempt or 1}
                 recs = build_agent_records(tr, bc, source, row.get("problem_statement"))
+                if lengths.too_long(lengths.annotate(recs)):
+                    counts["skip_too_long"] = counts.get("skip_too_long", 0) + 1
+                    continue
             except BudgetExceeded:
                 counts["skip_over_budget"] = counts.get("skip_over_budget", 0) + 1
                 continue
@@ -287,6 +299,10 @@ def cmd_agent_records(args: argparse.Namespace, cfg: dict) -> int:
             for r in recs:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
             counts["records"] += len(recs)
-    write_run_meta(out.parent, cfg, {"counts": counts, "output": str(out)})
+            kept.append(p.name)
+    tasks_file_for(out).write_text("".join(f"{k}\n" for k in kept))
+    counts["traces_kept"] = len(kept)
+    write_run_meta(out.parent, cfg, {"counts": counts, "output": str(out), "shard": shard,
+                                     "max_trace_tokens": lengths.limit})
     print(json.dumps(counts, indent=2))
     return 0

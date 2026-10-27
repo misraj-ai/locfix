@@ -30,6 +30,10 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "train.plan": ("locfix.train.sft:cmd_plan", "dry run: tokenize sources, print steps/tokens/visits"),
     "data.locfix-records": ("locfix.data.loc_fix_records:cmd_locfix_records",
                             "Stage 2 / round-0 localizer and fixer records (fixer root + localizer agent_tool)"),
+    "data.merge-records": ("locfix.data.build_common:cmd_merge_records",
+                           "concatenate the --shard outputs of the record builders, sum their counts"),
+    "data.split": ("locfix.data.build_common:cmd_split",
+                   "split record files into training and validation files by task (data.val_fraction)"),
 }
 
 

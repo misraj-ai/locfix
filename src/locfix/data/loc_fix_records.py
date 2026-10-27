@@ -505,11 +505,17 @@ def add_args_cmd_locfix_records(p: argparse.ArgumentParser) -> None:
                    help="drop tasks without a code file instead of rebuilding code from the trace")
     p.add_argument("--out", required=True, help="output folder (one JSONL per stage)")
     p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--tasks", help="trace files to use, one per line (the <out>.tasks.txt written by "
+                   "data.agent-records), so both methods train on the same tasks")
+    from .build_common import add_common_args
+
+    add_common_args(p)
 
 
 def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
     from ..harness.budget import time_scale_from_cfg
     from ..runmeta import write_run_meta
+    from .build_common import Lengths, in_shard, read_tasks
     from .dataset import SolvedData
 
     b = cfg["budget_locfix"]
@@ -522,6 +528,9 @@ def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
     )
     data = SolvedData(traces=args.traces, solved=args.solved, code_dirs=args.code,
                       exclude_repos=cfg["data"].get("exclude_repos", []))
+    lengths = Lengths(getattr(args, "tokenizer", None), cfg["data"].get("max_trace_tokens"))
+    shard = getattr(args, "shard", None)
+    tasks = read_tasks(args.tasks) if getattr(args, "tasks", None) else None
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     counts: dict[str, int] = {"traces": 0}
@@ -534,11 +543,24 @@ def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
         for i, p in enumerate(data.trace_paths()):
             if args.limit and i >= args.limit:
                 break
+            if not in_shard(i, shard):
+                continue
             counts["traces"] += 1
+            if tasks is not None and p.name not in tasks:
+                bump("skip:not_in_task_list")
+                continue
             try:
                 task, info = data.task(p, code_fallback=not args.no_code_fallback)
                 bump(f"code:{info.source}")
                 recs = build_task_records(task, lc, counts)
+                # a record longer than the limit is dropped on its own (the localizer's records of
+                # the same task stay usable without the fixer's, and the other way round)
+                lengths.annotate(recs)
+                for r in recs:
+                    if lengths.too_long(r["meta"].get("n_tokens", 0)):
+                        bump(f"drop:{r['stage']}:too_long")
+                        counts[f"records:{r['stage']}"] -= 1          # counted by build_task_records
+                recs = [r for r in recs if not lengths.too_long(r["meta"].get("n_tokens", 0))]
             except TaskSkip as e:
                 bump(f"skip:{e.reason}")
                 continue
@@ -554,7 +576,8 @@ def cmd_locfix_records(args: argparse.Namespace, cfg: dict) -> int:
     finally:
         for h in handles.values():
             h.close()
-    write_run_meta(out, cfg, {"counts": counts, "templates": TEMPLATES})
+    write_run_meta(out, cfg, {"counts": counts, "templates": TEMPLATES, "shard": shard,
+                              "max_trace_tokens": lengths.limit, "tasks_file": getattr(args, "tasks", None)})
     (out / "manifest.json").write_text(json.dumps(counts, indent=2, sort_keys=True))
     print(json.dumps(counts, indent=2, sort_keys=True))
     return 0
