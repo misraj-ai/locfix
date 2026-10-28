@@ -208,7 +208,7 @@ def render_record(record: dict[str, Any], tok) -> Rendered:
 
 # ---------------------------------------------------------------- embedded fixture records
 _RECORDS_GZ_B64 = """
-H4sIAD8I32oC/+y963bbRtYg+v88RbVyvhYZkRDBmyQmclpty91e7SSe2On+eix/JEiCFNokwAZAybTjWfNr1pq/s+YVzov1k5x9
+H4sIAHgq4moC/+y963bbRtYg+v88RbVyvhYZkRDBmyQmclpty91e7SSe2On+eix/JEiCFNokwAZAybTjWfNr1pq/s+YVzov1k5x9
 qQIKNxKkJNtJ0yuxSbBQtWvXrn2rXXt/OHDGBz1xEJh9a2q7YR/+8T332pvN+3373chehI7nwqPlwmgM25P2WevEGHnzoePa/Ykz
 s/v9mR065uzGh1fNfv+2cVCD7kLoTe8XH/rejJ5FDxwX2rkju88w7Dwyjegt/RF2/+EgsEMa2pvd2GP8bWyFlnzohdc2tZ94Mxr0
 Ar9YYWjPF9jA/FiTAPZHnjtxphHAwXHguFOYATQIPW8WwC+vPxyEqwVNarJ0Rwgw9a0+IzSuNacG/tKFLudzy2WY7GDkOwvZ7ODy
@@ -1214,7 +1214,7 @@ W7VG7eXhqz8evjmpfdprd9s7NRy22jVshV7T3wZe9Nq4qLALJA0EsKp3Go49r+01681m1Ws2Os1mp7m7
 iih6w29u+9vn0fg2nFwFHnyC/wG5k/3ktfjxtDegxPv48DKYjofxFBqBPmB+M0Vh1gIEURPCPSdEmMsknHwMOwpylc8S+SLKJLrw
 tryLKxA/L7TcYai6JDESc6Pj+Ijypti1sISu4h6dABuaCWG8IoEj7HqELA1H8QTRaEHoeB/fMICMyOGIkPGBNFMSoc4jAWaGUp4T
 WjRDZgbTAJfJjYIPn8TxlA+fBYycDhbDNAYky0hKHENRjCJITmPoBHm+MQj5p46FdkNLCCUzkZXfy0XgScIBNMIQfiAyMwbGwrNT
-OtuU266SlcCFziONlu57/0EXZUEUGkERHZQfifntpbBxvvcTUBP1odEkuY9dvQ0PODIk0pwi30SFaBQQqhvfH9A41VpdrHDQIgLt
+OtuU266SlcCFziONlu57/0EXZUEUGkERHZQfifntpbBxvvcTUBP1odEiuY9dvQ0PODIk0pwi30SFaBQQqhvfH9A41VpdrHDQIgLt
 FKD3wOMYLgmeGcPo9De/gfUWJTcsmk1VNVTtzynEqsjPmoKIpArl/PH05FWVV1UU8ywS7CrJQH83sd4Y6e1R6ipHtjlGhsfewACm
 gvW34h3CoGGc/ClGQvEFegiP2GXaCB/3D+wf8K1k1D7Ob/9AKsi3Ve8PoFZ8iyBiDCHGLnaI9/YI86dQYgQkBo0/majImim+H+0t
 miVoLUbgVODvQcRjxkI+qcygN6DpieT7CTvz41CqCThPzWXnj/iGuGFOQII149mmtAg4mCxGHAyVQyUB7g6mPDGBXHJSa8haGGuA
@@ -1339,7 +1339,7 @@ Yxj1Qj9XJoZVfT+djpPO1lY/7mHkFrwz58eT663mlth5t9DF4P10NHyMP7AudOYFgkIh5Kq5QvvhMJRr
 +IVXVfcOPLP+ymbRIfdKfuYO98XLLl/rRwfY2D+l38cnzvp0//wxpJpCKyvcWPaiOdBlFTZWVupsOhj6iGnSRVt5F9ZsRedFskme
 HXnHDrqxNXQOIMyCDJyt4FrUM7ehHuNNX6CenICdpU1Xh0S7OZwe//Dq8MVpZ2l7iUMAabZ21zqFXjrW5gIjj3HjzAFJm71dplBo
 l4mvWex1b11zIxDZbD0CSLtkHMtiq9BSNbX3lq1o5bHUdDtXrQKrfaiazTWeq1xB15YBOpcL0OnK014jz94aeRqNMnqoFT0UnmGO
-t1cJI1pCcv/WILlXjzb6wGukKMLob2G9FI2Wq675m+qfZ3U+XCDSNSJCzolQ2lo5QimO6kohSkvq/Fujzp//5f8HL5mWOlPrBwA=
+t1cJI1pCcv/WILlXjzb6wGukKMLob2G9FI2Wq675m+qfZ3U+XCDSNSJCzolQ2lo5QimO6kohSkvq/Fujzp//5f8HKvGSDVPrBwA=
 """
 
 

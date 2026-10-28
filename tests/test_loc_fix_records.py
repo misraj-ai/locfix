@@ -203,3 +203,13 @@ def test_locfix_agent_config(em_cfg):
     b = load_config()["budget_locfix"]
     assert (ev["max_time_minutes"], ev["max_tool_calls"], ev["max_turns"]) == (
         b["max_time_minutes"], b["max_tool_calls"], b["max_turns"])
+
+
+def test_localizer_prompt_matches_settings():
+    """The localizer's prompt states the limits the records are filtered with."""
+    import re
+
+    text = (ROOT / "agents/locfix/sub_agents/prompts/localizer.md").read_text()
+    em = load_config()["em"]
+    assert int(re.search(r"at most (\d+) tool calls", text).group(1)) == em["localizer_max_calls"]
+    assert int(re.search(r"at most (\d+) locations", text).group(1)) == em["max_locations"]
