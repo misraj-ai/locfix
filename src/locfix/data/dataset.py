@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..harness.prompts import parse_task_prompt
+from .code_files import check_code, code_file_name
 from .code_from_trace import seen_code
 from .loc_fix_records import Task, TaskSkip
 from .traces import load_trace, parse_trace_name
@@ -25,7 +26,7 @@ from .traces import load_trace, parse_trace_name
 
 @dataclass
 class CodeInfo:
-    source: str                            # "code_json" | "trace"
+    source: str                            # "code_json" | "code_json+trace" | "trace" | "trace:code_json_differs"
     path: str | None = None
     coverage: dict[str, float] | None = None
 
@@ -55,10 +56,12 @@ class SolvedData:
         return rng.sample(paths, min(k, len(paths)))
 
     def code_file(self, instance_id: str) -> Path | None:
+        names = dict.fromkeys([f"{instance_id}.json", code_file_name(instance_id)])
         for d in self.code_dirs:
-            p = d / f"{instance_id}.json"
-            if p.exists():
-                return p
+            for n in names:
+                p = d / n
+                if p.exists():
+                    return p
         return None
 
     def row(self, instance_id: str) -> dict[str, Any]:
@@ -80,14 +83,30 @@ class SolvedData:
             raise TaskSkip("dev_repo", repo)
         row = self.row(iid)
         cf = self.code_file(iid)
+        files = known = info = None
         if cf is not None:
-            files, known, info = json.loads(cf.read_text()), None, CodeInfo("code_json", str(cf))
-        elif code_fallback:
+            files = json.loads(cf.read_text())
+            chk = check_code(tr, files, row["teacher"]["patch"])
+            if chk["status"] == "ok":
+                known, info = None, CodeInfo("code_json", str(cf))
+            elif chk["status"] in ("missing_read_file", "missing_edited_file"):
+                # files the teacher printed but the code file lacks: take them from the trace
+                # (synthetic reads of those are limited to the lines it saw)
+                seen = seen_code(tr)
+                extra = {p: t for p, t in seen.files().items() if p not in files}
+                known = {p: set(range(1, len(t.splitlines()) + 1)) for p, t in files.items()}
+                known.update({p: k for p, k in seen.known().items() if p in extra})
+                files = {**files, **extra}
+                info = CodeInfo("code_json+trace", str(cf))
+            else:
+                # the code file does not reproduce what the teacher saw: do not mix the two
+                files, info = None, CodeInfo("trace:code_json_differs", str(cf))
+        if files is None:
+            if not code_fallback:
+                raise TaskSkip("no_code_file" if cf is None else "code_json_differs", iid)
             seen = seen_code(tr)
             files, known = seen.files(), seen.known()
-            info = CodeInfo("trace", None, seen.coverage())
-        else:
-            raise TaskSkip("no_code_file", iid)
+            info = CodeInfo(info.source if info else "trace", info.path if info else None, seen.coverage())
         task = Task(tr, files, row["teacher"]["patch"], row["problem_statement"],
                     source=self.source(row, tr.attempt), known_lines=known)
         return task, info

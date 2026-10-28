@@ -109,3 +109,21 @@ def test_split_by_task(tmp_path):
         assert va and {r["instance_id"] for r in tr}.isdisjoint({r["instance_id"] for r in va})
         assert sorted(r["id"] for r in tr + va) == sorted(r["id"] for r in (rows if rel.startswith("s1") else rows[:300]))
         assert all(is_val(r["instance_id"], 0.2, 1234) for r in va)
+
+
+def test_code_paths_and_check_code(data, tmp_path):
+    main(["data.code-paths", str(data / "traces"), "--solved", str(data / "solved.jsonl"),
+          "--out", str(tmp_path / "paths.jsonl")])
+    rows = {r["instance_id"]: r for r in lines(tmp_path / "paths.jsonl")}
+    assert len(rows) == 4
+    code_dir = ROOT / "tests" / "fixtures" / "code"
+    for iid, r in rows.items():
+        files = json.loads((code_dir / r["code_file"]).read_text())
+        # every file the fixture code holds for the patch is requested
+        from locfix.data.code_files import patch_paths
+        solved = {x["instance_id"]: x for x in lines(data / "solved.jsonl")}
+        assert set(patch_paths(solved[iid]["teacher"]["patch"])) <= set(r["paths"]) and files
+    main(["data.check-code", str(data / "traces"), "--solved", str(data / "solved.jsonl"),
+          "--code", str(code_dir), "--out", str(tmp_path / "check.json")])
+    rep = json.loads((tmp_path / "check.json").read_text())
+    assert rep["counts"] == {"ok": 4}

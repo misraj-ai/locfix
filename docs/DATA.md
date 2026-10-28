@@ -49,11 +49,32 @@ From the data pipeline's `codeagent_final/` folder (see `context/DATA_PIPELINE.m
 
 **Code files.** The two-agent records need the full files at the base commit, because the fixer
 re-reads the locations the localizer returns. `code/<id>.json` exists for the unsolved set
-(`experiment/code/`). For solved tasks, ask the data pipeline to write `cleaned/code/<id>.json`
-with the same extraction. Without a code file, the code is rebuilt from the lines the teacher
-printed before its first edit (`read_file` outputs, plain `sed -n 'a,bp' FILE` and `cat FILE`);
+(`experiment/code/`). For the solved set, `locfix data.fetch-code` (run by
+`notebooks/fetch_solved_code.ipynb`) writes `cleaned_v2/code/<id>.json` from `cleaned_v2/` alone:
+the files the task needs (`data.code-paths`: the patch's files + every file the teacher read),
+taken with plain git at `base_commit` (one commit, only the needed files), with `setup_patch`
+applied if present, or from the SWE-smith instance branch when that matches the trace better; then
+checked against the teacher's recorded reads (`data.check-code`, report in
+`fetch_code_report.json`).
+
+```bash
+locfix data.fetch-code codeagent_final/cleaned_v2/traces --solved codeagent_final/cleaned_v2/solved.jsonl \
+    --out codeagent_final/cleaned_v2/code --cache work/repo_cache --workers 8
+```
+
+The record builder checks every code file against the trace (`check_code`: the teacher's
+recorded `read_file` outputs before its first edit must be reproduced exactly):
+
+| `meta.code_source` | when |
+| --- | --- |
+| `code_json` | the code file reproduces every recorded read |
+| `code_json+trace` | a file the teacher read or edited is missing from the code file: it is taken from the trace (reads limited to the lines the teacher printed) |
+| `trace:code_json_differs` | the code file does not reproduce the teacher's reads (wrong commit, bug not applied, files changed by a command): it is not used |
+| `trace` | no code file |
+
+With code rebuilt from the trace (the last two rows), the lines the teacher printed before its
+first edit are the only source (`read_file` outputs, plain `sed -n 'a,bp' FILE` and `cat FILE`);
 records whose reads would touch a line the teacher never printed are dropped (`unseen_code`).
-Each record says which source it used (`meta.code_source`: `code_json` or `trace`).
 
 ## 2. Setup
 

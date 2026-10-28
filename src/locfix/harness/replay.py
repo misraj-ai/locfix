@@ -291,10 +291,18 @@ async def replay_async(
                                                               user_id="eval_user", state=state)
         message = genai_types.Content(role="user", parts=[genai_types.Part(text=initial_prompt)])
         while True:
-            async for _ in runner.run_async(user_id="eval_user", session_id=session.id,
-                                            new_message=message,
-                                            run_config=RunConfig(max_llm_calls=max_llm_calls)):
-                pass
+            try:
+                async for _ in runner.run_async(user_id="eval_user", session_id=session.id,
+                                                new_message=message,
+                                                run_config=RunConfig(max_llm_calls=max_llm_calls)):
+                    pass
+            except Exception as e:
+                # the scripted server answers a script error with HTTP 500, which LiteLLM raises as
+                # InternalServerError: report the script error itself
+                errors = [x.error for x in server.exchanges if x.error]
+                if errors:
+                    raise ReplayError(errors[0]) from e
+                raise
             errors = [e.error for e in server.exchanges if e.error]
             if errors:
                 raise ReplayError(errors[0])

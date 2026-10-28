@@ -32,6 +32,12 @@ COMMANDS: dict[str, tuple[str, str]] = {
                             "Stage 2 / round-0 localizer and fixer records (fixer root + localizer agent_tool)"),
     "data.merge-records": ("locfix.data.build_common:cmd_merge_records",
                            "concatenate the --shard outputs of the record builders, sum their counts"),
+    "data.code-paths": ("locfix.data.code_files:cmd_code_paths",
+                        "files each solved task needs at the base commit (input of fetch_solved_code.ipynb)"),
+    "data.fetch-code": ("locfix.data.fetch_code:cmd_fetch_code",
+                        "base-commit code files for the solved tasks, with plain git (+ check against the traces)"),
+    "data.check-code": ("locfix.data.code_files:cmd_check_code",
+                        "do code/<id>.json files reproduce the teacher's recorded reads?"),
     "data.split": ("locfix.data.build_common:cmd_split",
                    "split record files into training and validation files by task (data.val_fraction)"),
 }

@@ -68,6 +68,8 @@ N_SHARDS = 8            # parts of the data; keep it fixed between re-runs (fini
 WORKERS = None          # parallel processes; None = number of CPU cores
 LIMIT = 0               # > 0: only the first LIMIT traces (a quick try; use a different TAG)
 EXTRA_SETTINGS = []     # extra overrides, e.g. ["budget.max_tool_calls=40"] (then change TAG too)
+REBUILD_STEPS = []      # build these steps again even if finished, e.g. ["locfix"] after adding code files
+                        # (after a disconnect during that rebuild, set it back to [] to resume)
 
 import os, sys, json, pathlib, subprocess
 IN_COLAB = "google.colab" in sys.modules
@@ -150,6 +152,9 @@ def mb_written(d):
 def run_parts(step, make_args):
     """make_args(k, part_dir) -> locfix arguments for part k of N_SHARDS."""
     parts = [RUN_DIR / "parts" / step / str(k) for k in range(N_SHARDS)]
+    if step in REBUILD_STEPS:
+        for d in parts:
+            (d / "run_meta.json").unlink(missing_ok=True)     # makes every part run again
     todo = [k for k, d in enumerate(parts) if not (d / "run_meta.json").exists()]
     print(f"{step}: {N_SHARDS - len(todo)} parts already finished, {len(todo)} to run, {WORKERS} at a time")
     running, t0 = {}, time.time()
