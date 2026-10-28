@@ -83,7 +83,7 @@ def test_code_json_is_checked_against_the_trace(data_dir, all_trace_paths):
     code.mkdir(parents=True)
     for p in all_trace_paths:
         t = make_task(p)
-        assert check_code(t.trace, t.files, t.patch)["status"] == "ok", p.name
+        assert check_code(t.trace, t.files, t.patch)["status"] in ("ok", "unverified"), p.name
         assert set(t.files) & set(needed_paths(t.trace, t.patch)) >= {fp for fp in t.files if fp in t.patch}
     gun = next(p for p in all_trace_paths if p.name.startswith("benoitc"))
     t = make_task(gun)

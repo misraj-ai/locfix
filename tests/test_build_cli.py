@@ -126,4 +126,4 @@ def test_code_paths_and_check_code(data, tmp_path):
     main(["data.check-code", str(data / "traces"), "--solved", str(data / "solved.jsonl"),
           "--code", str(code_dir), "--out", str(tmp_path / "check.json")])
     rep = json.loads((tmp_path / "check.json").read_text())
-    assert rep["counts"] == {"ok": 4}
+    assert rep["counts"] == {"ok": 3, "unverified": 1}            # astropy: the teacher printed no file text

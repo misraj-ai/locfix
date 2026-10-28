@@ -35,9 +35,12 @@ downloaded from the task's GitHub repository, but only the needed files, with pl
 cleaned_v2/traces + solved.jsonl
    │  locfix data.fetch-code
    │    1. files each task needs: the teacher's patch files + every file it read
-   │    2. git: fetch base_commit (commit + trees only), download just those files,
-   │       apply setup_patch (SWE-smith bug) if present; else the SWE-smith instance branch
-   │    3. check: the files must reproduce the teacher's recorded read_file outputs
+   │    2. git, only the needed files:
+   │       SWE-smith tasks: the task's branch in the swesmith/<Owner>__<repo>.<hash8> mirror
+   │         (buggy code), test files the branch removed from the mirror's original commit;
+   │       other tasks: base_commit (+ setup_patch if any)
+   │    3. check: every line the teacher printed (read_file, sed -n, cat) must match the file
+   │       (no harness wheels needed; the record builder repeats it byte for byte)
    ▼
 cleaned_v2/code/<instance_id>.json  →  build_records.ipynb with REBUILD_STEPS = ["locfix"]
 ```
@@ -105,7 +108,8 @@ md("""
 - `fetch`: `fetched` (base commit, setup_patch applied if any), `fetched_from_instance_branch`
   (SWE-smith branch), `already_there`, `fetch failed` (repository or commit not reachable),
   `no_repo_or_commit`, `no_needed_file_at_commit`.
-- `check_per_trace`: `ok` (reproduces every recorded read), `missing_read_file` /
+- `check_per_trace`: `ok` (every printed line matches), `unverified` (the teacher printed no
+  line of these files before its first edit, so nothing to compare; used as is), `missing_read_file` /
   `missing_edited_file` (the builder fills them from the trace), `differs` (not what the teacher
   saw: the builder ignores the code file for that trace).
 """)

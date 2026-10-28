@@ -77,8 +77,7 @@ class GitCache:
         return subprocess.run(["git", "-C", str(self._dir(repo)), *args], capture_output=True,
                               check=check, timeout=self.timeout, env=env)
 
-    def ensure_commit(self, repo: str, commit: str) -> str | None:
-        """None if `commit` is available locally, else the reason it is not."""
+    def _init(self, repo: str) -> None:
         d = self._dir(repo)
         if not (d / ".git").exists():
             d.mkdir(parents=True, exist_ok=True)
@@ -87,6 +86,10 @@ class GitCache:
             self.git(repo, "config", "extensions.partialClone", "origin")
             self.git(repo, "config", "remote.origin.promisor", "true")
             self.git(repo, "config", "remote.origin.partialclonefilter", "blob:none")
+
+    def ensure_commit(self, repo: str, commit: str) -> str | None:
+        """None if `commit` is available locally, else the reason it is not."""
+        self._init(repo)
         if self.git(repo, "cat-file", "-e", f"{commit}^{{commit}}", check=False).returncode == 0:
             return None
         r = self.git(repo, "fetch", "-q", "--no-tags", "--depth", "1", "--filter=blob:none",
@@ -99,8 +102,10 @@ class GitCache:
     def branch_commit(self, repo: str, branch: str) -> str | None:
         """Fetch `refs/heads/<branch>` (SWE-smith keeps every task's buggy code on a branch named
         after the instance) and return its commit, or None if there is no such branch."""
+        self._init(repo)
+        ref = branch if branch == "HEAD" else f"refs/heads/{branch}"
         r = self.git(repo, "fetch", "-q", "--no-tags", "--depth", "1", "--filter=blob:none",
-                     "origin", f"refs/heads/{branch}", check=False)
+                     "origin", ref, check=False)
         if r.returncode:
             return None
         return self.git(repo, "rev-parse", "FETCH_HEAD").stdout.decode().strip() or None
@@ -146,6 +151,64 @@ def fetch_task(cache: GitCache, task: dict[str, Any], commit: str | None = None,
 
 def _first_check(task: dict[str, Any], files: dict[str, str]) -> str:
     return check_code(load_trace(task["traces"][0]), files, task["patch"])["status"]
+
+
+_SWESMITH = re.compile(r"^(.+?__.+?\.[0-9a-f]{8})\.")
+
+
+def swesmith_mirror(instance_id: str) -> str | None:
+    """SWE-smith task `<Owner>__<repo>.<hash8>.<bug>` -> its mirror repository `swesmith/<Owner>__<repo>.<hash8>`,
+    which keeps the task's buggy code on a branch named after the instance."""
+    m = _SWESMITH.match(instance_id)
+    return f"swesmith/{m.group(1)}" if m else None
+
+
+def fetch_best(cache: GitCache, t: dict[str, Any]) -> tuple[dict[str, str] | None, str]:
+    """Try the task's sources in order and keep the first whose files match the teacher's reads:
+    SWE-smith tasks: the instance branch of the mirror, then base_commit + setup_patch;
+    other tasks: base_commit + setup_patch, then a branch named after the instance (if any)."""
+    full_sha = bool(re.fullmatch(r"[0-9a-f]{40}", t.get("base_commit") or ""))
+    mirror = swesmith_mirror(t["instance_id"])
+    tries: list[tuple[str, Any]] = []
+    if mirror:
+        tries.append(("instance_branch", (mirror, t["instance_id"])))
+    if full_sha or not mirror:
+        tries.append(("base_commit", None))
+    if not mirror and t.get("repo"):
+        tries.append(("instance_branch", (t["repo"], t["instance_id"])))
+    first: tuple[dict[str, str] | None, str] | None = None
+    reasons = []
+    for kind, arg in tries:
+        if kind == "base_commit":
+            files, status = fetch_task(cache, t)
+        else:
+            repo, branch = arg
+            commit = cache.branch_commit(repo, branch)
+            if commit is None:
+                reasons.append(f"no branch {branch} in {repo}")
+                continue
+            files, status = fetch_task(cache, {**t, "repo": repo}, commit=commit, apply_setup=False)
+            status = status + "_from_instance_branch"
+            if mirror and repo == mirror:
+                # SWE-smith branches drop the task's test files; the teacher's environment had them,
+                # unchanged from the mirror's default branch (the original commit)
+                missing = [x for x in t["paths"] if x not in (files or {})]
+                head = cache.branch_commit(repo, "HEAD") if missing else None
+                if head:
+                    extra, _ = fetch_task(cache, {**t, "repo": repo, "paths": missing}, commit=head,
+                                          apply_setup=False)
+                    if extra:
+                        files = {**(files or {}), **extra}
+                        status = "fetched_from_instance_branch"
+        if files is None:
+            reasons.append(status)
+            continue
+        if _first_check(t, files) != "differs":
+            return files, status
+        first = first or (files, status + "_differs")
+    if first:
+        return first
+    return None, "; ".join(reasons)[:300] or "nothing to fetch"
 
 
 def plan_tasks(traces_dir: str | Path, solved: str | Path, tasks_file: str | None = None,
@@ -223,14 +286,7 @@ def cmd_fetch_code(args: argparse.Namespace, cfg: dict) -> int:
                 files, status = json.loads(target.read_text()), "already_there"
             else:
                 try:
-                    files, status = fetch_task(cache, t)
-                    if files is None or _first_check(t, files) == "differs":
-                        # SWE-smith: the task's buggy code is on a branch named after the instance
-                        alt = cache.branch_commit(t["repo"], t["instance_id"]) if t.get("repo") else None
-                        if alt:
-                            f2, s2 = fetch_task(cache, t, commit=alt, apply_setup=False)
-                            if f2 is not None and _first_check(t, f2) != "differs":
-                                files, status = f2, s2 + "_from_instance_branch"
+                    files, status = fetch_best(cache, t)
                 except Exception as e:  # noqa: BLE001 - one task must not stop the others
                     files, status = None, f"error:{type(e).__name__}: {str(e)[:150]}"
                 if files is not None:
@@ -254,8 +310,8 @@ def cmd_fetch_code(args: argparse.Namespace, cfg: dict) -> int:
 
     with ThreadPoolExecutor(max(1, args.workers)) as pool:
         list(pool.map(one_repo, by_repo.values()))
-    fetch = Counter(r["status"].split(":")[0] if r["status"].startswith(("fetch failed", "error"))
-                    else r["status"] for r in results.values())
+    fetch = Counter(r["status"] if r["status"].startswith(("fetched", "already"))
+                    else r["status"].split(":")[0].split(";")[0][:40] for r in results.values())
     checks = Counter(s for r in results.values() if r["check"] for s in r["check"].values())
     report = {"tasks": len(tasks), "repositories": len(by_repo), "trace_counts": dict(counts),
               "fetch": dict(fetch), "check_per_trace": dict(checks),

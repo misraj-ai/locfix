@@ -87,7 +87,7 @@ class SolvedData:
         if cf is not None:
             files = json.loads(cf.read_text())
             chk = check_code(tr, files, row["teacher"]["patch"])
-            if chk["status"] == "ok":
+            if chk["status"] in ("ok", "unverified"):
                 known, info = None, CodeInfo("code_json", str(cf))
             elif chk["status"] in ("missing_read_file", "missing_edited_file"):
                 # files the teacher printed but the code file lacks: take them from the trace

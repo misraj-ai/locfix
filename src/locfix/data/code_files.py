@@ -67,19 +67,51 @@ def code_file_name(instance_id: str) -> str:
     return instance_id.replace("/", "__") + ".json"
 
 
-def check_code(trace: Trace, files: dict[str, str], patch: str) -> dict[str, Any]:
-    """Does `files` reproduce the teacher's recorded `read_file` outputs (before its first edit),
-    and does it hold every file the patch edits?"""
-    from .render_obs import check_recorded_reads
+def _harness_available() -> bool:
+    import importlib.util
 
-    ok, bad = check_recorded_reads(trace, files, before_first_edit=True)
+    return importlib.util.find_spec("swegemma") is not None
+
+
+def check_code(trace: Trace, files: dict[str, str], patch: str, exact: bool | None = None) -> dict[str, Any]:
+    """Do `files` hold what the teacher saw before its first edit, and every file the patch edits?
+
+    - line check (always, no harness needed): every complete line the teacher printed
+      (`read_file` content, plain `sed -n` / `cat` output) must equal the file's line, and the
+      `total_lines` it was told must equal the file's length;
+    - exact check (`exact=True`, or `None` = when the harness wheels are installed): every recorded
+      `read_file` response is reproduced byte for byte by the harness's own `read_file`."""
+    seen = seen_code(trace)
     missing_edit = [p for p in patch_paths(patch) if p not in files]
-    differs = sorted({b["path"] for b in bad if b["reason"] == "differs"})
-    missing = sorted({b["path"] for b in bad if b["reason"] == "missing_file"})
+    differs: set[str] = set()
+    missing: set[str] = set()
+    lines_checked = 0
+    for p, known in seen.lines.items():
+        if p not in files:
+            missing.add(p)
+            continue
+        flines = files[p].splitlines()
+        total = seen.total.get(p)
+        if total is not None and total != len(flines):
+            differs.add(p)
+            continue
+        for n, text in known.items():
+            lines_checked += 1
+            if n > len(flines) or flines[n - 1].rstrip("\r") != text.rstrip("\r"):
+                differs.add(p)
+                break
+    reads_ok = None
+    if exact or (exact is None and _harness_available()):
+        from .render_obs import check_recorded_reads
+
+        reads_ok, bad = check_recorded_reads(trace, files, before_first_edit=True)
+        differs |= {b["path"] for b in bad if b["reason"] == "differs"}
+        missing |= {b["path"] for b in bad if b["reason"] == "missing_file"}
     status = ("differs" if differs else "missing_edited_file" if missing_edit
-              else "missing_read_file" if missing else "ok")
-    return {"status": status, "reads_ok": ok, "differs": differs, "missing_read": missing,
-            "missing_edit": missing_edit}
+              else "missing_read_file" if missing else "ok" if lines_checked or reads_ok
+              else "unverified")              # the teacher printed nothing of these files to compare
+    return {"status": status, "lines_checked": lines_checked, "reads_ok": reads_ok,
+            "differs": sorted(differs), "missing_read": sorted(missing), "missing_edit": missing_edit}
 
 
 # --------------------------------------------------------------------------- CLI
