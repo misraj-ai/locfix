@@ -78,3 +78,26 @@ These give the reference numbers, decide `include_thoughts`, and validate the ru
 - Packaged submission passes the vendor validator and the size/extension checks; a deliberately
   broken one (wrong model, symlink, 3.1 GiB) is refused.
 - `timing.json` exists for E4B and 31B and the 12-hour check passes for the chosen budget.
+
+## Implementation status (2026-11-03)
+
+- `locfix submit.package` (`src/locfix/submit/package.py`): structures `single` (role `agent`) and
+  `locfix` (roles `fixer`, `localizer`); the same folder for both locfix roles is packaged once as
+  `locfix_lora` ("one model, two roles"); budget and sampling seed written into the package;
+  refuses adapters without a passing `parity.json`, rank > 128, a model outside the allowed list,
+  symlinks, > 3 GiB; runs the harness's `validate_directory`.
+- `locfix eval.run` (`src/locfix/eval/run.py`): starts vLLM with `adk_submission.VllmServer` (the
+  scorer's class and flags) and runs `swegemma.evaluate.Evaluator` with the submission's
+  `eval_config.yaml` budget and Kaggle's compaction (interval 15, overlap 2, threshold 14,336,
+  retention 5) and context cache (2,048 tokens, 1,800 s, every 10). The plain `swegemma eval`
+  command applies neither (its budget comes from flags, default 60 min). Resumable: earlier rows of
+  `task_results.jsonl` are merged back (the evaluator rewrites the file at the end of a run).
+- `locfix eval.summary`, `locfix eval.compare` (`src/locfix/eval/stats.py`): Wilson 95% CI; exact
+  McNemar on discordant tasks, per seed and pooled over (task, seed) pairs.
+- Tests (`tests/test_submit_eval.py`): packaging of all structures and refusals; fixture
+  trajectories replayed through packaged submissions reach the server under each agent's adapter
+  name (`agent_lora`; `fix_lora` / `loc_lora`) with the packaged seed; statistics against known
+  values; runner configuration and the vLLM command line.
+- Not yet run on GPUs with Docker. Acceptance: 10 dev tasks with the base model.
+- Not built: `eval timing` (Kaggle), and the held-out task set in the harness's format
+  (`tasks.jsonl` + snapshots) must come from the data pipeline.

@@ -1,0 +1,12 @@
+# Stage 3 round 0, fold localizer A: target z = L_edit ∪ L_view (s3_loc_r0), fold A tasks only.
+# Generates the Stage 3 candidates for the OTHER fold's tasks (cross-fitting, spec 06 §1-2).
+# Records: `locfix em.fold-split` output (${paths.records}/folds/A/locfix/).
+train:
+  model: e4b
+  role: localizer
+  sources:
+    - {path: "${paths.records}/folds/A/locfix/s3_loc_r0.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s3_loc_r0.jsonl"}
+  output_dir: "${paths.runs}/S3r0-e4b/loc_A"
+  epochs: 3

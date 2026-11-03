@@ -117,7 +117,32 @@ and the adapter's effect size on both sides. An adapter whose parity fails is no
 | `S2a-e4b-fixer` | fixer | `s2_fix_gold.jsonl` |
 | `S2a-view-e4b-localizer` | localizer | `s2_loc_view.jsonl` (paired with the S2a fixer) |
 | `S2b-e4b-fixer` | fixer | `s2_fix_gold.jsonl` + `s2_fix_noisy.jsonl` (1 epoch ≈ 3 visits per fix) |
-| `S3` rounds | localizer / fixer | `s3_loc_r<t>` with EM weights in `weight`; `init_adapter` + `lr_scale: 0.5` (spec 06) |
+| `S3r0-e4b-loc-{A,B}` | fold localizers | `folds/<F>/locfix/s3_loc_r0.jsonl` (`em.fold-split`): candidates for the other fold |
+| `S3r0-e4b-fix-{A,B}` | fold fixers | `folds/<F>/locfix/s2_fix_{gold,noisy}.jsonl`, 1 epoch: scoring + signal test on the other fold |
+| `S3r0-e4b-localizer` | localizer | `s3_loc_r0.jsonl` (all tasks; only if the signal test passes) |
+| `S3` rounds ≥ 1 | localizer / fixer | `s3_loc_r<t>` with EM weights in `weight`; `init_adapter` + `lr_scale: 0.5` (spec 06) |
+
+### Stage 3 round 0 and the signal test (spec 06 §1-5, §8)
+
+```
+locfix em.fold-split records/locfix --out records/folds                    # folds.json + per-fold files
+# train S3r0-e4b-{loc,fix}-{A,B}; quant.parity on the two fold fixers
+locfix em.candidates  --loc-records records/locfix/s3_loc_r0.jsonl --folds records/folds \
+    --ct <ct> --loc-A <loc_A> --loc-B <loc_B> --out s3r0/samples/part<k>.jsonl --shard k/8      # GPU
+locfix score.prepare  --loc-records ... --folds ... --samples s3r0/samples/*.jsonl \
+    --traces ... --solved ... --code ... --tokenizer <ct> --out s3r0/prepare --workers 32         # CPU
+locfix score.run      --items s3r0/prepare/items.jsonl --ct <ct> --fix-A <fix_A> --fix-B <fix_B> \
+    --out s3r0/scores/part<k>.jsonl --shard k/8                                                   # GPU
+locfix score.weights  --scores s3r0/scores/*.jsonl --candidates s3r0/prepare/candidates.jsonl --out s3r0/weights
+locfix em.signal-test --weights s3r0/weights/weights.jsonl --traces ... --solved ... --code ... \
+    --ct <ct> --fix-A <fix_A> --fix-B <fix_B> --out s3r0/signal --vllm-arg=--data-parallel-size=8  # GPU
+```
+
+The signal test cannot use the harness's "resolved" (training tasks are not run in Docker on the
+training node; the Kaggle dev tasks have no teacher labels), so the fold fixer writes its own edit
+given z* (the top-weighted candidate) and given z_T, offline (`em.rollout`: real agent stack, live
+fixer on vLLM, tools on the task's files), and both edits are compared with the verified patch.
+Primary metric: every hunk of the verified patch reproduced; decision rules in `em/signal.py`.
 
 Mixing: `{path, weight, repeat}` per file. `weight` multiplies the loss weights of the file's
 tokens; `repeat` 2 uses every record twice per epoch, 0.5 a different random half each epoch.

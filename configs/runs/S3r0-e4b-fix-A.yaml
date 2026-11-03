@@ -1,0 +1,14 @@
+# Stage 3 round 0, fold fixer A: the S2b fixer recipe (gold + noisy z, with requests) on fold A
+# tasks only. Scores the candidates of the OTHER fold's tasks and runs the signal test on them.
+# The full-data round-0 fixer is the S2b fixer (configs/runs/S2b-e4b-fixer.yaml): not retrained.
+train:
+  model: e4b
+  role: fixer
+  sources:
+    - {path: "${paths.records}/folds/A/locfix/s2_fix_gold.jsonl"}
+    - {path: "${paths.records}/folds/A/locfix/s2_fix_noisy.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s2_fix_gold.jsonl"}
+    - {path: "${paths.records}/val/locfix/s2_fix_noisy.jsonl"}
+  output_dir: "${paths.runs}/S3r0-e4b/fix_A"
+  epochs: 1

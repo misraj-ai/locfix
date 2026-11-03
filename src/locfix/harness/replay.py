@@ -251,6 +251,7 @@ async def replay_async(
     summarizer: Callable[[dict], dict] | None = None,
     max_llm_calls: int = 500,
     prompt_token_counter: Callable[[dict], int] | None = None,
+    player: _Player | None = None,
 ) -> ReplayResult:
     from adk_submission import compile_submission
     from adk_submission.registry import ModelRegistry
@@ -265,7 +266,10 @@ async def replay_async(
 
     from swegemma.tools import create_tools
 
-    player = _Player(steps, summarizer, prompt_token_counter, harness_tools=set(create_tools(_Ctx())))
+    # `player`: a _Player subclass with its own scripts (e.g. the signal test's live rollouts,
+    # `locfix.em.rollout`); by default the scripts are replayed as recorded
+    if player is None:
+        player = _Player(steps, summarizer, prompt_token_counter, harness_tools=set(create_tools(_Ctx())))
     with ScriptedServer(player.handle) as server:
         install_litellm_reasoning_patch()
         models = ModelRegistry()

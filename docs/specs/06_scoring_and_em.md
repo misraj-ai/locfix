@@ -120,3 +120,16 @@ scored by the cross-fitted fixer; their fixer records use the gold patch. Mixing
   record sets and adapters.
 - Diagnostics logged per round: weight entropy, fraction of issues where the top candidate is the
   teacher label, average |z| tokens, requests per issue, recall/precision of z vs L_edit.
+
+
+## Implementation status (2026-11-03)
+
+Round 0 and the signal test are implemented and CPU-tested (`tests/test_stage3.py`):
+`em.fold-split` (§1), `em.candidates` (§2, fold localizers: a localizer trained on all tasks would
+reproduce the z_T it memorized), `score.prepare` (§3, with modes `none` / `recover` for a_k and
+`score/spans.py`), `score.run` (§4, the parity mechanism; the HF cross-check is the per-adapter
+`quant.parity` run), `score.weights` (§5). §8 is adapted: evaluation runs only on the Kaggle dev
+tasks, which have no teacher labels, so the signal test is an offline proxy on the training tasks
+(`em.rollout`, `em.signal-test`): the cross-fitted fixer's own edits given z* and given z_T are
+compared with the verified patch (all hunks reproduced, primary), paired McNemar. Not yet built:
+§6 (LOO), round ≥ 1 record building and orchestration (§7), Stage 4.

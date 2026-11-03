@@ -1,0 +1,12 @@
+# Stage 3 round 0, full localizer: target z = L_edit ∪ L_view (s3_loc_r0), all training tasks.
+# Train only if the signal test passes: it is the warm start of the round-1 localizer and, with the
+# S2b fixer, the "round 0" system evaluated on Kaggle.
+train:
+  model: e4b
+  role: localizer
+  sources:
+    - {path: "${paths.records}/locfix/s3_loc_r0.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s3_loc_r0.jsonl"}
+  output_dir: "${paths.runs}/S3r0-e4b/localizer"
+  epochs: 3
