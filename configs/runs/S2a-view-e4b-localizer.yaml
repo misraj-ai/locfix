@@ -1,0 +1,11 @@
+# Stage 2a-view localizer: target = the code the teacher read before its first edit (L_view).
+# Paired with the S2a fixer (no fixer training of its own). Label ablation against S2a.
+train:
+  model: e4b
+  role: localizer
+  sources:
+    - {path: "${paths.records}/locfix/s2_loc_view.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s2_loc_view.jsonl"}
+  output_dir: "${paths.runs}/S2a-view-e4b/localizer"
+  epochs: 3

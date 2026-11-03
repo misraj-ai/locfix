@@ -42,6 +42,7 @@ class TrainSettings:
     init_adapter: str | None = None       # warm start (EM rounds, Stage 5)
     global_batch_rows: int = 16
     per_device_rows: int = 1
+    gradient_accumulation: int | None = None   # None: global_batch_rows / (GPUs × per_device_rows)
     max_seq_len: int = 32768
     packing: bool = False
     length_grouping: bool = False
@@ -80,6 +81,8 @@ class TrainSettings:
             lora_r=int(t["lora"]["r"]), lora_alpha=int(t["lora"]["alpha"]),
             lora_dropout=float(t["lora"].get("dropout", 0.0)), init_adapter=t.get("init_adapter"),
             global_batch_rows=int(t["global_batch_sequences"]), per_device_rows=int(t.get("per_device_batch", 1)),
+            gradient_accumulation=(int(t["gradient_accumulation_steps"])
+                                   if t.get("gradient_accumulation_steps") is not None else None),
             max_seq_len=int(t["max_seq_len"]), packing=bool(t.get("packing", False)),
             length_grouping=bool(t.get("length_grouping", False)),
             attn_implementation=t.get("attn_implementation", "sdpa"),
@@ -94,7 +97,23 @@ class TrainSettings:
         )
 
     def grad_accum(self, world_size: int) -> int:
+        """Accumulation steps for `world_size` GPUs. With `gradient_accumulation` set by hand, the
+        three numbers must agree: GPUs × per_device_rows × accumulation = global_batch_rows."""
+        if self.per_device_rows != 1:
+            raise ValueError(f"per_device_batch must be 1 (got {self.per_device_rows}): rows are single "
+                             "records or packed rows, never padded; use packing for more tokens per forward")
         per_step = world_size * self.per_device_rows
+        if self.gradient_accumulation is not None:
+            ga = self.gradient_accumulation
+            if ga < 1:
+                raise ValueError(f"gradient_accumulation_steps must be >= 1, got {ga}")
+            if ga * per_step != self.global_batch_rows:
+                raise ValueError(
+                    f"{world_size} GPUs × per_device_batch {self.per_device_rows} × gradient_accumulation_steps "
+                    f"{ga} = {ga * per_step} rows per optimizer step, but global_batch_sequences = "
+                    f"{self.global_batch_rows}; set global_batch_sequences={ga * per_step} or change the "
+                    "accumulation")
+            return ga
         if self.global_batch_rows % per_step:
             raise ValueError(f"global batch {self.global_batch_rows} is not a multiple of "
                              f"{world_size} processes × {self.per_device_rows} rows")
@@ -299,7 +318,12 @@ def run_training(s: TrainSettings, cfg: dict[str, Any] | None = None, use_cpu: b
             "val_sources": [r.__dict__ | {"errors": r.errors[:20]} for r in val_reports],
             "trainable_parameters": trainable,
         })
-        print(json.dumps({"plan": summary, "trainable_parameters": trainable}, indent=2))
+        print(json.dumps({"batch": {"gpus": ws, "per_device_batch": s.per_device_rows,
+                                    "gradient_accumulation_steps": ga, "global_batch_sequences": s.global_batch_rows},
+                          "learning_rate": s.learning_rate, "epochs": s.epochs, "warmup_steps": s.warmup_steps,
+                          "max_seq_len": s.max_seq_len, "lora": {"r": s.lora_r, "alpha": s.lora_alpha},
+                          "packing": s.packing, "length_grouping": s.length_grouping,
+                          "plan": summary, "trainable_parameters": trainable}, indent=2))
     result = trainer.train()
     final = os.path.join(s.output_dir, "final")
     trainer.save_adapter(final)
@@ -341,7 +365,8 @@ def cmd_plan(args: argparse.Namespace, cfg: dict) -> int:
     s = TrainSettings.from_config(cfg)
     tok = AutoTokenizer.from_pretrained(args.tokenizer or s.tokenizer or s.base_model)
     examples, reports, _, _, plan, ga = build_data(s, tok, args.world_size, nullcontext)
-    print(json.dumps({"world_size": args.world_size, "gradient_accumulation_steps": ga,
+    print(json.dumps({"world_size": args.world_size, "per_device_batch": s.per_device_rows,
+                      "gradient_accumulation_steps": ga, "global_batch_sequences": s.global_batch_rows,
                       "learning_rate": s.learning_rate, "plan": plan_summary(plan, examples, s.sources),
                       "sources": [{k: v for k, v in r.__dict__.items() if k != "errors"} for r in reports]},
                      indent=2))

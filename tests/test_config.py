@@ -54,3 +54,16 @@ def test_deep_merge_does_not_mutate():
 def test_bad_override():
     with pytest.raises(ConfigError):
         load_config(overrides=["no_equals_sign"])
+
+
+def test_exponent_numbers_without_a_dot_are_floats(tmp_path: Path):
+    """`2e-4` must be a number in run configs and in --set (PyYAML alone reads it as a string)."""
+    from locfix.train.sft import TrainSettings
+
+    rc = tmp_path / "run.yaml"
+    rc.write_text("train:\n  learning_rate: 3e-4\n  sources: [{path: x.jsonl}]\n  output_dir: out\n")
+    cfg = load_config([rc], ["em.beta=5E-1", "train.lora.r=32", "versions.vllm=0.19.1", "x.y=1e3x"])
+    assert cfg["train"]["learning_rate"] == 3e-4 and isinstance(cfg["train"]["learning_rate"], float)
+    assert cfg["em"]["beta"] == 0.5 and cfg["train"]["lora"]["r"] == 32
+    assert cfg["versions"]["vllm"] == "0.19.1" and cfg["x"]["y"] == "1e3x"       # strings stay strings
+    assert TrainSettings.from_config(load_config([rc], ["train.learning_rate=2e-4"])).learning_rate == 2e-4

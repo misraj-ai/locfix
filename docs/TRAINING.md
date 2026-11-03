@@ -115,6 +115,7 @@ and the adapter's effect size on both sides. An adapter whose parity fails is no
 | `S1-{e4b,31b}` | single agent | `s1_agent.jsonl` |
 | `S2a-e4b-localizer` | localizer | `s2_loc_edit.jsonl` (packing on: short records) |
 | `S2a-e4b-fixer` | fixer | `s2_fix_gold.jsonl` |
+| `S2a-view-e4b-localizer` | localizer | `s2_loc_view.jsonl` (paired with the S2a fixer) |
 | `S2b-e4b-fixer` | fixer | `s2_fix_gold.jsonl` + `s2_fix_noisy.jsonl` (1 epoch ≈ 3 visits per fix) |
 | `S3` rounds | localizer / fixer | `s3_loc_r<t>` with EM weights in `weight`; `init_adapter` + `lr_scale: 0.5` (spec 06) |
 
@@ -129,6 +130,7 @@ tokens; `repeat` 2 uses every record twice per epoch, 0.5 a different random hal
 | `lora` | r 64, alpha 32, dropout 0 | plain LoRA on q,k,v,o,gate,up,down of the language model |
 | `epochs` | 3 | adapters saved at every epoch end |
 | `global_batch_sequences`, `per_device_batch` | 16, 1 | rows per optimizer step; accumulation = 16 / (GPUs × 1) |
+| `gradient_accumulation_steps` | null | null: derived as above; set by hand, GPUs × `per_device_batch` × accumulation must equal `global_batch_sequences` (checked at start). `per_device_batch` must be 1 (rows are single or packed records, never padded) |
 | `schedule` | 10 warmup steps, cosine to 10% | |
 | `optimizer` | AdamW (0.9, 0.999), wd 0, clip 1.0 | |
 | `max_seq_len` | 32768 | longer records are dropped and counted |

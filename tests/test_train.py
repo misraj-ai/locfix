@@ -297,3 +297,20 @@ def test_parity_hf_side_and_random_adapter(tmp_path):
     assert len(base["r1"]) == 28
     assert compare(base, base)["max"] == 0
     assert compare(ad, base)["mean"] > 1e-3                    # the adapter changes the outputs
+
+
+def test_gradient_accumulation_by_hand():
+    """Accumulation can be set explicitly; GPUs × per-device × accumulation must equal the global batch."""
+    from locfix.config import load_config
+    from locfix.train.sft import TrainSettings
+
+    def s(*ov):
+        return TrainSettings.from_config(load_config([ROOT / "configs/runs/S1-e4b.yaml"], list(ov)))
+
+    assert s().grad_accum(8) == 2 and s().grad_accum(4) == 4             # derived, as before
+    assert s("train.gradient_accumulation_steps=4").grad_accum(4) == 4
+    assert s("train.gradient_accumulation_steps=1", "train.global_batch_sequences=8").grad_accum(8) == 1
+    with pytest.raises(ValueError, match="global_batch_sequences=32"):
+        s("train.gradient_accumulation_steps=4").grad_accum(8)          # 8 × 1 × 4 = 32 ≠ 16
+    with pytest.raises(ValueError, match="per_device_batch must be 1"):
+        s("train.per_device_batch=2").grad_accum(8)

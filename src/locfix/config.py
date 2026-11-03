@@ -21,6 +21,26 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 _REF = re.compile(r"\$\{([A-Za-z0-9_.\-]+)\}")
 
 
+class _Loader(yaml.SafeLoader):
+    """SafeLoader that also reads exponent numbers without a dot (`2e-4`, `1E5`) as floats.
+
+    PyYAML follows YAML 1.1, where a float needs a dot, so `learning_rate: 2e-4` (or
+    `--set train.learning_rate=2e-4`) used to arrive as the string '2e-4'. Only strings with an
+    exponent are affected; ints, `2.0e-4`, versions like `0.19.1` and other strings are unchanged."""
+
+
+_Loader.yaml_implicit_resolvers = {k: list(v) for k, v in yaml.SafeLoader.yaml_implicit_resolvers.items()}
+_Loader.add_implicit_resolver(
+    "tag:yaml.org,2002:float",
+    re.compile(r"^[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)[eE][-+]?[0-9]+$"),
+    list("-+0123456789."),
+)
+
+
+def _yaml(text_or_stream: Any) -> Any:
+    return yaml.load(text_or_stream, Loader=_Loader)  # noqa: S506 - a SafeLoader subclass
+
+
 class ConfigError(ValueError):
     pass
 
@@ -78,7 +98,7 @@ def resolve_refs(cfg: dict) -> dict:
 
 def load_yaml(path: str | Path) -> dict:
     with open(path) as f:
-        data = yaml.safe_load(f) or {}
+        data = _yaml(f) or {}
     if not isinstance(data, dict):
         raise ConfigError(f"{path}: top level must be a mapping")
     return data
@@ -100,5 +120,5 @@ def load_config(
         if "=" not in ov:
             raise ConfigError(f"override must be key=value, got {ov!r}")
         key, raw = ov.split("=", 1)
-        set_dotted(cfg, key.strip(), yaml.safe_load(raw))
+        set_dotted(cfg, key.strip(), _yaml(raw))
     return resolve_refs(cfg) if resolve else cfg

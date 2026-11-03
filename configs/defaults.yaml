@@ -99,6 +99,8 @@ train:                         # `locfix train` (src/locfix/train/sft.py); a run
   schedule: {warmup_steps: 10, decay: cosine, min_lr_ratio: 0.1}
   global_batch_sequences: 16   # rows per optimizer step (all GPUs × accumulation × per_device_batch)
   per_device_batch: 1          # rows per forward (rows are packed or single records; no padding)
+  gradient_accumulation_steps: null  # null: global_batch_sequences / (GPUs × per_device_batch); set by
+                               # hand, it must satisfy GPUs × per_device_batch × accumulation = global batch
   gradient_checkpointing: true
   packing: false               # true: several short records per row (first-fit, ≤ max_seq_len tokens)
   length_grouping: false       # true: rows of similar length in the same step (less waiting across GPUs)
