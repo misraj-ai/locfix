@@ -314,3 +314,47 @@ def test_gradient_accumulation_by_hand():
         s("train.gradient_accumulation_steps=4").grad_accum(8)          # 8 × 1 × 4 = 32 ≠ 16
     with pytest.raises(ValueError, match="per_device_batch must be 1"):
         s("train.per_device_batch=2").grad_accum(8)
+
+
+@needs_tok
+def test_training_run_cpu_two_val_sources(tmp_path):
+    """Two validation files (e.g. s2_fix_gold + s2_fix_noisy): the end-of-epoch validation used to
+    index the second file's examples past a one-element source list (IndexError at the epoch end)."""
+    from locfix.render.chat import load_tokenizer
+    from locfix.train.sft import TrainSettings, run_training
+
+    lines = (RECORDS / "locfix_fixtures.jsonl").read_text().splitlines()
+    a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
+    a.write_text("\n".join(x for x in lines if '"stage": "s2_loc_edit"' in x) + "\n")
+    b.write_text("\n".join(x for x in lines if '"stage": "s3_loc_r0"' in x) + "\n")
+    s = TrainSettings(output_dir=str(tmp_path / "run"), base_model="unused", sources=[Source(str(a))],
+                      val_sources=[Source(str(a)), Source(str(b))], epochs=1, learning_rate=1e-3, lora_r=4,
+                      lora_alpha=8, global_batch_rows=2, warmup_steps=0, cache_dir=str(tmp_path / "cache"),
+                      bf16=False, serve_id="gemma-4-e4b-it-qat-w4a16-ct")
+    run_training(s, use_cpu=True, model=tiny_model("31b", vocab=262144), tokenizer=load_tokenizer(TOK_DIR))
+    (val,) = [json.loads(x) for x in (tmp_path / "run" / "val.jsonl").read_text().splitlines()]
+    assert {"val_nll/s2_loc_edit", "val_nll/s3_loc_r0", "val_nll/all"} <= set(val)
+    assert (tmp_path / "run" / "export" / "final" / "adapter_model.safetensors").exists()
+
+
+def test_finish_run_exports_saved_epochs(tmp_path):
+    from safetensors.torch import load_file
+
+    from locfix.train.export import ExportError, finish_run
+
+    run = tmp_path / "run"
+    pe = lora_model("e4b")
+    pe.save_pretrained(run / "epoch-1")
+    base = tmp_path / "base"
+    base.mkdir()
+    (base / "config.json").write_text(json.dumps({"text_config": pe.get_base_model().config.to_dict()}))
+    rep = finish_run(run, base, serve_id="gemma-4-e4b-it-qat-w4a16-ct")
+    assert rep["final_from"] == "epoch-1" and sorted(rep["exports"]) == ["epoch-1", "final"]
+    a = load_file(str(run / "export" / "epoch-1" / "adapter_model.safetensors"))
+    f = load_file(str(run / "export" / "final" / "adapter_model.safetensors"))
+    assert a.keys() == f.keys() and all(torch.equal(a[k], f[k]) for k in a)
+    assert json.loads((run / "result.json").read_text())["recovered"] is True
+    rep2 = finish_run(run, base)                     # again: final exists now, result.json kept
+    assert rep2["final_from"] is None and rep2["written"].endswith("recovered.json")
+    with pytest.raises(ExportError, match="no epoch"):
+        finish_run(tmp_path / "empty", base)

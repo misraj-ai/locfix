@@ -1,0 +1,16 @@
+# Stage 3 Round 1, soft EM localizer (spec 06 §7): the Round-0 localizer's own candidates weighted by
+# the cross-fitted fixer (score.weights, ESS 2) + z_T anchor (β = 0.5); every task has total weight 1.
+# Warm start from the full Round-0 localizer (S3r0-e4b-localizer), learning rate × 0.5.
+# Records: `locfix em.r1-records` -> ${paths.records}/s3r1/soft/s3_loc_r1.jsonl.
+# Served with the S2b fixer (Round 1 changes only the localizer).
+train:
+  model: e4b
+  role: localizer
+  init_adapter: "${paths.runs}/S3r0-e4b/localizer/final"
+  lr_scale: 0.5
+  sources:
+    - {path: "${paths.records}/s3r1/soft/s3_loc_r1.jsonl"}
+  val_sources:
+    - {path: "${paths.records}/val/locfix/s3_loc_r0.jsonl"}
+  output_dir: "${paths.runs}/S3r1-e4b/loc_soft"
+  epochs: 1

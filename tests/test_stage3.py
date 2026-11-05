@@ -653,3 +653,100 @@ def test_prepare_refuses_records_built_with_other_agent_files(gunicorn, lc):
     assert old != good
     with pytest.raises(RecordsMismatch):
         sequences_for_task(task, tl, [Candidate(0, "teacher", zt)], lc, tok, ("none",), expect_loc_messages=old)
+
+
+# --------------------------------------------------------------------------- Round 1 records
+def _wrow(iid, cands, zt):
+    return {"instance_id": iid, "fold": "A", "z_teacher": zt,
+            "candidates": [{"cand_id": c, "source": s, "z": z, "w_z": w} for c, s, z, w in cands]}
+
+
+def test_r1_task_weights():
+    from locfix.em.r1_records import task_weights
+
+    zt, za, zb, zc = ([{"path": "a.py", "symbol": s, "lines": [1, 2], "role": "edit"}] for s in "TABC")
+    # soft: z_T has little weight; top-3 kept, renormalized; anchor β = 0.5 added to z_T; total 1
+    row = _wrow("t", [(0, "teacher", zt, 0.05), (1, "sample", za, 0.55), (2, "sample", zb, 0.3),
+                      (3, "edit_only", zc, 0.1)], zt)
+    ws = {d["cand_id"]: d for d in task_weights(row, beta=0.5, top_m=3, min_weight=0.01)}
+    kept = [1, 2, 3]                                    # z_T (0.05) is 4th by weight: not kept, anchor only
+    assert set(ws) == {0, *kept}
+    tot = 0.55 + 0.3 + 0.1
+    assert abs(ws[1]["w"] - 0.55 / tot / 1.5) < 1e-9 and abs(ws[0]["w"] - 0.5 / 1.5) < 1e-9
+    assert ws[0]["anchor"] and not ws[1]["anchor"] and abs(sum(d["w"] for d in ws.values()) - 1) < 1e-9
+    # hard (one-hot) on z_T: one record, weight 1
+    hard = task_weights(_wrow("t", [(0, "teacher", zt, 1.0), (1, "sample", za, 0.0)], zt), 0.5, 3, 0.01)
+    assert [(d["cand_id"], round(d["w"], 9), d["anchor"]) for d in hard] == [(0, 1.0, True)]
+    # hard on a sample: best 2/3, anchor 1/3
+    hard = task_weights(_wrow("t", [(0, "teacher", zt, 0.0), (1, "sample", za, 1.0)], zt), 0.5, 3, 0.01)
+    assert [(d["cand_id"], round(d["w"], 6)) for d in hard] == [(0, round(1 / 3, 6)), (1, round(2 / 3, 6))]
+
+
+def test_r1_answer_replacement_equals_replay_with_that_z(gunicorn):
+    """Replacing the answer of the s3_loc_r0 record by z gives exactly the record the replay builds
+    for z: the s2_loc_edit record is that replay with z = L_edit."""
+    from locfix.em.r1_records import with_answer
+
+    _, _, recs = gunicorn
+    r0 = next(r for r in recs if r["stage"] == "s3_loc_r0")
+    le = next(r for r in recs if r["stage"] == "s2_loc_edit")
+    r = with_answer(r0, le["z"], {"cand_id": 3, "source": "edit_only", "anchor": False, "w": 0.25}, "z3", 1)
+    assert r["messages"] == le["messages"] and r["tools"] == le["tools"] and r["loss"] == le["loss"]
+    assert r["stage"] == "s3_loc" and r["round"] == 1 and r["weight"] == 0.25 and r["z"] == le["z"]
+    assert r["id"].startswith("s3_loc__") and r["id"].endswith("__r1z3")
+
+
+@needs_tok
+def test_r1_records_cli_schema_and_render(tmp_path, gunicorn, stage3_data):
+    import jsonschema
+
+    from locfix.cli import main
+    from locfix.render.chat import load_tokenizer, render_record
+
+    d = stage3_data
+    loc = d / "records/locfix/s3_loc_r0.jsonl"
+    recs = [json.loads(x) for x in loc.read_text().splitlines()]
+    iids = sorted({r["instance_id"] for r in recs})
+    r0 = next(r for r in recs if r["instance_id"] == iids[0])
+    other = [{"path": r0["z"][0]["path"], "symbol": "x", "lines": [1, 3], "role": "edit"}]
+    w = [_wrow(iids[0], [(0, "teacher", r0["z"], 0.2), (1, "sample", other, 0.8)], r0["z"])]
+    wp = tmp_path / "weights.jsonl"
+    wp.write_text("".join(json.dumps(x) + "\n" for x in w))
+    out = tmp_path / "s3r1" / "soft" / "s3_loc_r1.jsonl"
+    assert main(["em.r1-records", "--loc-records", str(loc), "--weights", str(wp), "--out", str(out)]) == 0
+    rows = [json.loads(x) for x in out.read_text().splitlines()]
+    s = json.loads(Path(str(out) + ".summary.json").read_text())
+    assert s["tasks_weighted"] == 1 and s["tasks_unscored_anchor_only"] == len(iids) - 1
+    mine = [r for r in rows if r["instance_id"] == iids[0]]
+    assert sorted(r["meta"]["em"]["cand_id"] for r in mine) == [0, 1]
+    assert abs(sum(r["weight"] for r in mine) - 1) < 1e-6
+    by = {r["meta"]["em"]["cand_id"]: r for r in mine}
+    assert abs(by[0]["weight"] - (0.2 + 0.5) / 1.5) < 1e-6 and abs(by[1]["weight"] - 0.8 / 1.5) < 1e-6
+    assert all(r["weight"] == 1.0 for r in rows if r["instance_id"] != iids[0])
+    schema = json.loads((ROOT / "schemas/record.schema.json").read_text())
+    for r in rows:              # (the fixtures' dataset name "fixture" is not a schema value)
+        jsonschema.validate({**r, "source": {**r["source"], "dataset": "swe_smith"}}, schema)
+    tok = load_tokenizer(TOK_DIR)
+    ren = render_record(by[1], tok)
+    trained = [x for x, lab in zip(ren.weights, ren.labels, strict=True) if lab != -100]
+    assert trained and all(abs(x - by[1]["weight"]) < 1e-6 for x in trained)
+    assert '"symbol": "x"' in ren.text
+    # the weights must come from the same records
+    bad = [_wrow(iids[0], [(0, "teacher", other, 1.0)], other)]
+    wp.write_text("".join(json.dumps(x) + "\n" for x in bad))
+    with pytest.raises(ValueError, match="differs"):
+        main(["em.r1-records", "--loc-records", str(loc), "--weights", str(wp), "--out", str(out)])
+
+
+def test_round1_run_configs_resolve():
+    from locfix.config import load_config
+    from locfix.train.sft import TrainSettings
+
+    for mode in ("soft", "hard"):
+        cfg = load_config([str(ROOT / "configs/runs" / f"S3r1-e4b-loc-{mode}.yaml")],
+                          overrides=["train.learning_rate=2e-4"])
+        t = TrainSettings.from_config(cfg)
+        assert t.init_adapter.endswith("S3r0-e4b/localizer/final")
+        assert abs(t.learning_rate - 1e-4) < 1e-12                     # lr_scale 0.5
+        assert [x.path for x in t.sources] == [t.sources[0].path] and f"/s3r1/{mode}/" in t.sources[0].path
+        assert t.output_dir.endswith(f"S3r1-e4b/loc_{mode}") and t.epochs == 1

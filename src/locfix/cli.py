@@ -46,6 +46,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
     "eval.compare": ("locfix.eval.stats:cmd_compare", "paired comparison of two systems (exact McNemar)"),
     "data.split": ("locfix.data.build_common:cmd_split",
                    "split record files into training and validation files by task (data.val_fraction)"),
+    "train.finish": ("locfix.train.export:cmd_finish",
+                     "export a run's saved epoch adapters (and final) when the run stopped before its export"),
     "em.fold-split": ("locfix.em.folds:cmd_fold_split",
                       "Stage 3: per-fold record files (A/B) for cross-fitted localizers and fixers"),
     "em.candidates": ("locfix.em.candidates:cmd_candidates",
@@ -56,6 +58,8 @@ COMMANDS: dict[str, tuple[str, str]] = {
                   "Stage 3: log p of the verified patch's added tokens under the other fold's fixer (GPU)"),
     "score.weights": ("locfix.score.weights:cmd_weights",
                       "Stage 3: scores -> λ calibration, per-task τ (ESS target), w(z), z* and diagnostics"),
+    "em.r1-records": ("locfix.em.r1_records:cmd_r1",
+                      "Stage 3 Round 1: localizer records from the Round 0 weights (candidates + z_T anchor)"),
     "em.signal-test": ("locfix.em.signal:cmd_signal",
                        "Stage 3: fold fixer's own edit given z* vs z_T, paired against the verified patch (GPU)"),
 }

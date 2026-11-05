@@ -213,7 +213,9 @@ def make_trainer_class():
             num = torch.zeros(n, dtype=torch.float64, device=self.args.device)
             den = torch.zeros(n, dtype=torch.float64, device=self.args.device)
             rank, world = self.accelerator.process_index, self.accelerator.num_processes
-            ds = RowDataset([[i] for i in range(len(examples))], examples, [Source("val")] * 1)
+            # one weight-1 source per validation file (examples keep the index of their val source)
+            ds = RowDataset([[i] for i in range(len(examples))], examples,
+                            [Source("val")] * (1 + max(e.source for e in examples)))
             for k in range(rank, len(ds), world):
                 batch = {key: v.unsqueeze(0).to(self.args.device) for key, v in ds[k].items()}
                 batch.pop("source_ids")

@@ -98,3 +98,46 @@ def export_adapter(adapter_dir: str | Path, out_dir: str | Path, text_config, se
               "dtype": str(dtype).replace("torch.", "")}
     (out_dir / "export.json").write_text(json.dumps(report, indent=2))
     return report
+
+
+# --------------------------------------------------------------------------- CLI
+def finish_run(run_dir: str | Path, base_model: str | Path, serve_id: str | None = None) -> dict[str, Any]:
+    """Export a training run's saved adapters (vLLM layout) after the run stopped before its own
+    export: every `epoch-*` folder, and `final` (copied from the last epoch when it is missing:
+    the last epoch's adapter IS the final adapter). Writes `result.json` if the run has none
+    (`recovered: true`; no training metrics or val NLL), else `recovered.json`."""
+    run = Path(run_dir)
+    epochs = sorted(run.glob("epoch-*"), key=lambda p: int(p.name.split("-")[1]))
+    if not epochs:
+        raise ExportError(f"{run}: no epoch-* adapter folders")
+    for d in epochs:
+        if not (d / "adapter_model.safetensors").is_file():
+            raise ExportError(f"{d}: no adapter_model.safetensors (the save did not finish)")
+    final = run / "final"
+    final_from = None
+    if not (final / "adapter_model.safetensors").is_file():
+        shutil.rmtree(final, ignore_errors=True)
+        shutil.copytree(epochs[-1], final)
+        final_from = epochs[-1].name
+    cfg = json.loads((Path(base_model) / "config.json").read_text())
+    text_config = cfg.get("text_config", cfg)
+    out: dict[str, Any] = {"recovered": True, "final_from": final_from, "final_adapter": str(final), "exports": {}}
+    for d in [*epochs, final]:
+        out["exports"][d.name] = export_adapter(d, run / "export" / d.name, text_config, serve_id=serve_id)
+    dest = run / ("recovered.json" if (run / "result.json").exists() else "result.json")
+    dest.write_text(json.dumps(out, indent=2, default=str))
+    out["written"] = str(dest)
+    return out
+
+
+def add_args_cmd_finish(p) -> None:
+    p.add_argument("--run-dir", required=True, help="the run's output_dir (holds epoch-1, epoch-2, ...)")
+    p.add_argument("--base-model", required=True, help="the dequantized bf16 base the run trained on (its config.json)")
+    p.add_argument("--model", default="e4b", help="model key in the config (sets the served model id)")
+
+
+def cmd_finish(args, cfg: dict) -> int:
+    rep = finish_run(args.run_dir, args.base_model, serve_id=cfg["models"][args.model]["serve_id"])
+    print(json.dumps({"final_from": rep["final_from"], "exports": sorted(rep["exports"]), "written": rep["written"]},
+                     indent=2))
+    return 0

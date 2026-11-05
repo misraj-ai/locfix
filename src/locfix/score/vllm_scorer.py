@@ -115,7 +115,8 @@ def add_args_cmd_run(p: argparse.ArgumentParser) -> None:
     p.add_argument("--shard", type=parse_shard, default=None, help="K/N by task (one GPU per shard)")
     p.add_argument("--chunk", type=int, default=64, help="sequences per vLLM call (bounds host memory)")
     p.add_argument("--tp", type=int, default=1)
-    p.add_argument("--gpu-memory-utilization", type=float, default=0.85)
+    p.add_argument("--gpu-memory-utilization", type=float, default=0.55,
+                   help="vLLM's share of the GPU; the prompt log-prob buffers (4-9 GiB per chunk) live outside it")
     p.add_argument("--no-parity-check", action="store_true", help="score with adapters that have no passing parity.json")
     p.add_argument("--vllm-text-only", action="store_true")
 
